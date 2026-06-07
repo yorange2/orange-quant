@@ -1,0 +1,259 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ──────────────────────────────────────
+// Market
+// ──────────────────────────────────────
+
+model Exchange {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  code      String     @unique
+  country   String?
+  timezone  String?
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  symbols   Symbol[]
+
+  @@map("exchanges")
+}
+
+model Symbol {
+  id          String      @id @default(cuid())
+  ticker      String
+  name        String?
+  type        SymbolType  @default(STOCK)
+  exchangeId  String      @map("exchange_id")
+  currency    String      @default("USD")
+  isActive    Boolean     @default(true) @map("is_active")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  exchange    Exchange        @relation(fields: [exchangeId], references: [id])
+  bars        Bar[]
+  orders      Order[]
+  strategies  StrategySymbol[]
+
+  @@unique([ticker, exchangeId])
+  @@map("symbols")
+}
+
+enum SymbolType {
+  STOCK
+  ETF
+  INDEX
+  FOREX
+  CRYPTO
+  FUTURE
+  OPTION
+  BOND
+  COMMODITY
+}
+
+model Bar {
+  id        String    @id @default(cuid())
+  symbolId  String    @map("symbol_id")
+  timeframe Timeframe
+  open      Decimal   @db.Decimal(18, 8)
+  high      Decimal   @db.Decimal(18, 8)
+  low       Decimal   @db.Decimal(18, 8)
+  close     Decimal   @db.Decimal(18, 8)
+  volume    BigInt
+  timestamp DateTime  @map("timestamp")
+
+  symbol    Symbol    @relation(fields: [symbolId], references: [id])
+
+  @@unique([symbolId, timeframe, timestamp])
+  @@index([symbolId, timeframe])
+  @@map("bars")
+}
+
+enum Timeframe {
+  TICK
+  M1
+  M5
+  M15
+  M30
+  H1
+  H4
+  D1
+  W1
+  MN1
+}
+
+// ──────────────────────────────────────
+// Strategy
+// ──────────────────────────────────────
+
+model Strategy {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  description String?
+  version     String    @default("0.1.0")
+  status      StrategyStatus @default(DRAFT)
+  config      Json      @default("{}")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  signals     Signal[]
+  orders      Order[]
+  symbols     StrategySymbol[]
+  backtests   Backtest[]
+
+  @@map("strategies")
+}
+
+enum StrategyStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  RETIRED
+}
+
+model Signal {
+  id          String      @id @default(cuid())
+  strategyId  String      @map("strategy_id")
+  symbolId    String      @map("symbol_id")
+  direction   Direction
+  confidence  Decimal     @db.Decimal(5, 4)
+  reason      Json        @default("{}")
+  timestamp   DateTime    @map("timestamp")
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  strategy    Strategy    @relation(fields: [strategyId], references: [id])
+  symbol      Symbol      @relation(fields: [symbolId], references: [id])
+
+  @@index([strategyId, timestamp])
+  @@index([symbolId, timestamp])
+  @@map("signals")
+}
+
+enum Direction {
+  LONG
+  SHORT
+  FLAT
+}
+
+// ──────────────────────────────────────
+// Trading
+// ──────────────────────────────────────
+
+model Order {
+  id            String      @id @default(cuid())
+  strategyId    String      @map("strategy_id")
+  symbolId      String      @map("symbol_id")
+  orderType     OrderType   @default(MARKET) @map("order_type")
+  side          Direction
+  quantity      Decimal     @db.Decimal(18, 8)
+  price         Decimal?    @db.Decimal(18, 8)
+  limitPrice    Decimal?    @db.Decimal(18, 8) @map("limit_price")
+  stopPrice     Decimal?    @db.Decimal(18, 8) @map("stop_price")
+  status        OrderStatus @default(PENDING)
+  filledQty     Decimal     @default(0) @db.Decimal(18, 8) @map("filled_qty")
+  filledAvgPx   Decimal?    @db.Decimal(18, 8) @map("filled_avg_px")
+  externalId    String?     @map("external_id")
+  filledAt      DateTime?   @map("filled_at")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  strategy      Strategy    @relation(fields: [strategyId], references: [id])
+  symbol        Symbol      @relation(fields: [symbolId], references: [id])
+
+  @@index([strategyId, createdAt])
+  @@index([symbolId, createdAt])
+  @@map("orders")
+}
+
+enum OrderType {
+  MARKET
+  LIMIT
+  STOP
+  STOP_LIMIT
+}
+
+enum OrderStatus {
+  PENDING
+  SUBMITTED
+  PARTIAL_FILL
+  FILLED
+  CANCELLED
+  REJECTED
+}
+
+// ──────────────────────────────────────
+// Backtesting
+// ──────────────────────────────────────
+
+model Backtest {
+  id          String          @id @default(cuid())
+  strategyId  String          @map("strategy_id")
+  name        String
+  startDate   DateTime        @map("start_date")
+  endDate     DateTime        @map("end_date")
+  timeframe   Timeframe
+  initialCapital Decimal       @db.Decimal(18, 4) @map("initial_capital")
+  finalEquity    Decimal?      @db.Decimal(18, 4) @map("final_equity")
+  totalReturn    Decimal?      @db.Decimal(10, 6) @map("total_return")
+  sharpeRatio    Decimal?      @db.Decimal(10, 6) @map("sharpe_ratio")
+  maxDrawdown    Decimal?      @db.Decimal(10, 6) @map("max_drawdown")
+  winRate        Decimal?      @db.Decimal(10, 6) @map("win_rate")
+  numTrades      Int?          @map("num_trades")
+  config         Json          @default("{}")
+  status         BacktestStatus @default(RUNNING)
+  createdAt     DateTime       @default(now()) @map("created_at")
+  completedAt   DateTime?      @map("completed_at")
+
+  strategy      Strategy       @relation(fields: [strategyId], references: [id])
+  trades        BacktestTrade[]
+
+  @@index([strategyId, createdAt])
+  @@map("backtests")
+}
+
+enum BacktestStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model BacktestTrade {
+  id          String    @id @default(cuid())
+  backtestId  String    @map("backtest_id")
+  symbolId    String    @map("symbol_id")
+  direction   Direction
+  entryPrice  Decimal   @db.Decimal(18, 8) @map("entry_price")
+  exitPrice   Decimal   @db.Decimal(18, 8) @map("exit_price")
+  quantity    Decimal   @db.Decimal(18, 8)
+  pnl         Decimal   @db.Decimal(18, 4)
+  entryAt     DateTime  @map("entry_at")
+  exitAt      DateTime  @map("exit_at")
+  reason      Json      @default("{}")
+
+  backtest    Backtest  @relation(fields: [backtestId], references: [id])
+  symbol      Symbol    @relation(fields: [symbolId], references: [id])
+
+  @@index([backtestId])
+  @@map("backtest_trades")
+}
+
+// ──────────────────────────────────────
+// Join Table
+// ──────────────────────────────────────
+
+model StrategySymbol {
+  strategyId String @map("strategy_id")
+  symbolId   String @map("symbol_id")
+
+  strategy   Strategy @relation(fields: [strategyId], references: [id])
+  symbol     Symbol   @relation(fields: [symbolId], references: [id])
+
+  @@id([strategyId, symbolId])
+  @@map("strategy_symbols")
+}
