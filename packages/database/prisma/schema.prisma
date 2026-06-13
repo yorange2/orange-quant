@@ -6,3 +6,30 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+model Source {
+  id        String     @id @default(uuid())
+  name      String
+  feedUrl   String     @map("feed_url")
+  type      String     @default("rss")
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now()) @map("created_at")
+  items     NewsItem[]
+
+  @@map("sources")
+}
+
+model NewsItem {
+  id          String    @id @default(uuid())
+  title       String
+  summary     String?
+  url         String    @unique
+  publishedAt DateTime  @map("published_at")
+  sourceId    String    @map("source_id")
+  source      Source    @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([publishedAt])
+  @@index([sourceId])
+  @@map("news_items")
+}
