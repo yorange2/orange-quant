@@ -192,6 +192,7 @@ class QuantExperiment:
             mlflow.end_run()
 
         with R.start(experiment_name="orange_quant_exp"):
+            recorder = R.get_recorder()  # 立即保存 recorder 引用
             R.log_params(
                 instruments=self.instruments,
                 train_period=f"{self.train_start}_{self.train_end}",
@@ -201,11 +202,11 @@ class QuantExperiment:
             R.save_objects(**{"lgb_model.pkl": trainer.model})
 
             # 信号记录
-            sr = SignalRecord(trainer.model, dataset, R.get_recorder())
+            sr = SignalRecord(trainer.model, dataset, recorder)
             sr.generate()
 
             # 信号分析（IC、Rank IC、Long-Short 收益）
-            sar = SigAnaRecord(R.get_recorder())
+            sar = SigAnaRecord(recorder)
             sar.generate()
 
             # 回测
@@ -250,7 +251,7 @@ class QuantExperiment:
             }
 
             par = PortAnaRecord(
-                R.get_recorder(),
+                recorder,
                 port_analysis_config,
                 "day",
             )
@@ -263,7 +264,7 @@ class QuantExperiment:
         return {
             "trainer": trainer,
             "predictions": predictions,
-            "recorder": R.get_recorder(),
+            "recorder": recorder,
         }
 
 
