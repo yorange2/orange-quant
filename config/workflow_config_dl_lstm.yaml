@@ -1,0 +1,63 @@
+# =============================================================
+# Orange Quant 深度学习实验 — LSTM
+# =============================================================
+# 用法：
+#   python -c "from orange_quant.workflow.experiment import run_dl_from_yaml; run_dl_from_yaml('config/workflow_config_dl_lstm.yaml')"
+# =============================================================
+
+# ── qlib 初始化 ──
+qlib_init:
+    provider_uri: "~/.qlib/qlib_data/cn_data"
+    region: cn
+
+# ── 数据配置 ──
+data:
+    instruments: csi300
+
+# ── 训练集 / 验证集 / 测试集 ──
+train:
+    start: "2008-01-01"
+    end: "2014-12-31"
+valid:
+    start: "2015-01-01"
+    end: "2016-12-31"
+test:
+    start: "2017-01-01"
+    end: "2020-08-01"
+
+# ── 深度学习模型配置 ──
+model:
+    name: LSTM
+    kwargs:
+        d_feat: 20
+        hidden_size: 64
+        num_layers: 2
+        dropout: 0.0
+        n_epochs: 100
+        lr: 0.001
+        early_stop: 10
+        batch_size: 800
+        metric: loss
+        loss: mse
+        GPU: 0
+
+# ── 时序数据集配置 ──
+dataset:
+    step_len: 20               # 回看窗口长度（天）
+
+# ── 策略配置 ──
+strategy:
+    class: MomentumTopKStrategy
+    module_path: orange_quant.strategies.mom_topk
+    kwargs:
+        signal: <PRED>
+        topk: 50
+        n_drop: 5
+        hold_thresh: 1
+        risk_degree: 0.95
+
+# ── 回测配置 ──
+backtest:
+    benchmark: SH000300
+    account: 100000000
+    freq: day

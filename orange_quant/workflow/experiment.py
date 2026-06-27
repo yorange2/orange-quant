@@ -25,6 +25,7 @@ from qlib.utils import init_instance_by_config
 
 from ..data.handler import Alpha158Custom
 from ..models.trainer import LightGBMTrainer
+from ..models.dl_trainer import DLTrainer, KNOWN_DL_MODULES
 from ..strategies.mom_topk import MomentumTopKStrategy
 from ..backtest.runner import BacktestRunner
 
@@ -265,3 +266,177 @@ def run_from_yaml(config_path: str = "config/workflow_config.yaml") -> dict:
     """
     experiment = QuantExperiment.from_yaml(config_path)
     return experiment.run()
+
+
+def run_dl_from_yaml(config_path: str = "config/workflow_config_dl_lstm.yaml") -> dict:
+    """
+    从 YAML 配置运行深度学习实验的便捷函数。
+
+    支持所有 qlib PyTorch 模型：
+        LSTM, GRU, Transformer, ALSTM, TRA, Localformer,
+        SFM, TCN, KRNN, GATs, HIST, IGMTF, TCTS 等
+
+    使用方式：
+        from orange_quant.workflow.experiment import run_dl_from_yaml
+        results = run_dl_from_yaml("config/workflow_config_dl_lstm.yaml")
+
+    Parameters
+    ----------
+    config_path : str
+        深度学习实验 YAML 配置文件路径。
+    """
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+
+    qlib_cfg = config.get("qlib_init", {})
+    data_cfg = config.get("data", {})
+    train_cfg = config.get("train", {})
+    valid_cfg = config.get("valid", {})
+    test_cfg = config.get("test", {})
+    model_cfg = config.get("model", {})
+    dataset_cfg = config.get("dataset", {})
+    strategy_cfg = config.get("strategy", {})
+    backtest_cfg = config.get("backtest", {})
+
+    provider_uri = str(Path(qlib_cfg.get("provider_uri", "~/.qlib/qlib_data/cn_data")).expanduser())
+    region = qlib_cfg.get("region", "cn")
+    instruments = data_cfg.get("instruments", "csi300")
+    train_start = train_cfg.get("start", "2008-01-01")
+    train_end = train_cfg.get("end", "2014-12-31")
+    valid_start = valid_cfg.get("start", "2015-01-01")
+    valid_end = valid_cfg.get("end", "2016-12-31")
+    test_start = test_cfg.get("start", "2017-01-01")
+    test_end = test_cfg.get("end", "2020-08-01")
+
+    model_name = model_cfg.get("name", "LSTM")
+    model_kwargs = model_cfg.get("kwargs", {})
+    step_len = dataset_cfg.get("step_len", 20)
+    benchmark = backtest_cfg.get("benchmark", "SH000300")
+
+    print("\n" + "=" * 60)
+    print(f"🚀 Orange Quant 深度学习实验 — {model_name}")
+    print("=" * 60 + "\n")
+
+    # ── Step 1: 初始化 qlib ──
+    print(f"[orange_quant] 初始化 qlib, 数据路径: {provider_uri}")
+    qlib.init(provider_uri=provider_uri, region=region)
+
+    # ── Step 2: 构建时序数据集 (TSDatasetH) ──
+    print(f"[orange_quant] 加载数据: {instruments}, step_len={step_len}")
+
+    # DL 模型使用 TSDatasetH + 特殊预处理
+    from qlib.contrib.data.handler import Alpha158
+    from qlib.data.dataset import TSDatasetH
+
+    handler = Alpha158(
+        instruments=instruments,
+        start_time=train_start,
+        end_time=test_end,
+        fit_start_time=train_start,
+        fit_end_time=train_end,
+        infer_processors=[
+            {
+                "class": "FilterCol",
+                "kwargs": {
+                    "fields_group": "feature",
+                    "col_list": [
+                        "RESI5", "WVMA5", "RSQR5", "KLEN", "RSQR10", "CORR5",
+                        "CORD5", "CORR10", "ROC60", "RESI10", "VSTD5", "RSQR60",
+                        "CORR60", "WVMA60", "STD5", "RSQR20", "CORD60", "CORD10",
+                        "CORR20", "KLOW",
+                    ],
+                },
+            },
+            {"class": "RobustZScoreNorm", "kwargs": {"fields_group": "feature", "clip_outlier": True}},
+            {"class": "Fillna", "kwargs": {"fields_group": "feature"}},
+        ],
+        learn_processors=[
+            {"class": "DropnaLabel"},
+            {"class": "CSRankNorm", "kwargs": {"fields_group": "label"}},
+        ],
+        label=["Ref($close, -2) / Ref($close, -1) - 1"],
+    )
+
+    dataset = TSDatasetH(
+        handler=handler,
+        segments={
+            "train": (train_start, train_end),
+            "valid": (valid_start, valid_end),
+            "test": (test_start, test_end),
+        },
+        step_len=step_len,
+    )
+    print(f"[orange_quant] TSDatasetH 构建完成, step_len={step_len}")
+
+    # ── Step 3: 训练模型 ──
+    trainer = DLTrainer(
+        model_name=model_name,
+        dataset=dataset,
+        **model_kwargs,
+    )
+    trainer.fit()
+    predictions = trainer.predict(segment="test")
+
+    # ── Step 4: 记录实验 ──
+    if mlflow.active_run():
+        mlflow.end_run()
+
+    with R.start(experiment_name=f"orange_quant_dl_{model_name.lower()}"):
+        recorder = R.get_recorder()
+        R.log_params(
+            model=model_name,
+            instruments=instruments,
+            step_len=step_len,
+            train_period=f"{train_start}_{train_end}",
+            test_period=f"{test_start}_{test_end}",
+            **model_kwargs,
+        )
+        R.save_objects(**{f"{model_name.lower()}_model.pkl": trainer.model})
+
+        # 信号记录
+        sr = SignalRecord(trainer.model, dataset, recorder)
+        sr.generate()
+
+        # 信号分析
+        sar = SigAnaRecord(recorder)
+        sar.generate()
+
+        # 回测
+        port_analysis_config = {
+            "executor": {
+                "class": "SimulatorExecutor",
+                "module_path": "qlib.backtest.executor",
+                "kwargs": {
+                    "time_per_step": "day",
+                    "generate_portfolio_metrics": True,
+                },
+            },
+            "backtest": {
+                "start_time": test_start,
+                "end_time": test_end,
+                "account": 100000000,
+                "benchmark": benchmark,
+                "exchange_kwargs": {
+                    "freq": "day",
+                    "limit_threshold": 0.095,
+                    "deal_price": "close",
+                    "open_cost": 0.0005,
+                    "close_cost": 0.0015,
+                    "min_cost": 5,
+                },
+            },
+            "strategy": strategy_cfg,
+        }
+
+        par = PortAnaRecord(recorder, port_analysis_config, "day")
+        par.generate()
+
+    print("\n" + "=" * 60)
+    print(f"✅ {model_name} 实验完成！")
+    print("=" * 60 + "\n")
+
+    return {
+        "trainer": trainer,
+        "predictions": predictions,
+        "recorder": recorder,
+    }
