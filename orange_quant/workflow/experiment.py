@@ -34,6 +34,7 @@ class QuantExperiment:
     量化实验管理器。
 
     一键运行完整实验流程，自动记录模型参数、预测信号、IC 分析、回测结果。
+    模型和策略均使用 orange_quant 自己的类（通过 YAML 配置驱动）。
 
     使用方式：
 
@@ -67,7 +68,7 @@ class QuantExperiment:
         test_start: str = "2017-01-01",
         test_end: str = "2020-08-01",
         model_params: Optional[dict] = None,
-        strategy_params: Optional[dict] = None,
+        strategy_config: Optional[dict] = None,
         backtest_params: Optional[dict] = None,
     ):
         """
@@ -87,8 +88,8 @@ class QuantExperiment:
             测试集（回测）时间范围。
         model_params : dict
             LightGBM 超参数，覆盖默认值。
-        strategy_params : dict
-            策略参数，覆盖默认值。
+        strategy_config : dict
+            策略完整配置（含 class, module_path, kwargs），用于 PortAnaRecord。
         backtest_params : dict
             回测参数，覆盖默认值。
         """
@@ -103,7 +104,7 @@ class QuantExperiment:
         self.test_end = test_end
 
         self.model_params = model_params or {}
-        self.strategy_params = strategy_params or {}
+        self.strategy_config = strategy_config or {}
         self.backtest_params = backtest_params or {}
 
     @classmethod
@@ -139,7 +140,7 @@ class QuantExperiment:
             test_start=test_config.get("start", "2017-01-01"),
             test_end=test_config.get("end", "2020-08-01"),
             model_params=model_cfg.get("kwargs", {}),
-            strategy_params=strategy_cfg.get("kwargs", {}),
+            strategy_config=strategy_cfg,  # 完整的策略配置（含 class, module_path, kwargs）
             backtest_params=backtest_cfg,
         )
 
@@ -209,11 +210,7 @@ class QuantExperiment:
             sar = SigAnaRecord(recorder)
             sar.generate()
 
-            # 回测
-            strategy = MomentumTopKStrategy(
-                **self.strategy_params,
-            )
-
+            # 回测 — 使用 orange_quant 策略配置
             port_analysis_config = {
                 "executor": {
                     "class": "SimulatorExecutor",
@@ -237,17 +234,7 @@ class QuantExperiment:
                         "min_cost": 5,
                     },
                 },
-                "strategy": {
-                    "class": "TopkDropoutStrategy",
-                    "module_path": "qlib.contrib.strategy.signal_strategy",
-                    "kwargs": {
-                        "signal": "<PRED>",
-                        "topk": 50,
-                        "n_drop": 5,
-                        "risk_degree": 0.95,
-                        **self.strategy_params,
-                    },
-                },
+                "strategy": self.strategy_config,
             }
 
             par = PortAnaRecord(
