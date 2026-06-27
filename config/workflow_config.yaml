@@ -1,0 +1,65 @@
+# =============================================================
+# Orange Quant 工作流配置文件
+# =============================================================
+# 用法：
+#   python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/workflow_config.yaml')"
+#   qrun config/workflow_config.yaml  # 如果使用 qlib CLI
+# =============================================================
+
+# ── qlib 初始化 ──
+qlib_init:
+    provider_uri: "~/.qlib/qlib_data/cn_data"  # qlib 数据目录
+    region: cn                                   # A股市场
+
+# ── 数据配置 ──
+data:
+    instruments: csi300                         # 股票池: csi300 / csi500 / all
+    start_time: "2010-01-01"                    # 数据起始
+    end_time: "2020-08-01"                      # 数据结束
+
+# ── 训练集 ──
+train:
+    start: "2010-01-01"
+    end: "2014-12-31"
+
+# ── 验证集 ──
+valid:
+    start: "2015-01-01"
+    end: "2016-12-31"
+
+# ── 测试集（回测期） ──
+test:
+    start: "2017-01-01"
+    end: "2020-08-01"
+
+# ── 模型配置（LightGBM） ──
+model:
+    class: LGBModel
+    module_path: qlib.contrib.model.gbdt
+    kwargs:
+        loss: mse
+        num_boost_round: 500
+        early_stopping_rounds: 50
+        learning_rate: 0.05
+        num_leaves: 64
+        feature_fraction: 0.8
+        bagging_fraction: 0.8
+        bagging_freq: 5
+        verbose_eval: 50
+
+# ── 策略配置 ──
+strategy:
+    class: TopkDropoutStrategy
+    module_path: qlib.contrib.strategy.signal_strategy
+    kwargs:
+        signal: <PRED>     # 使用模型预测分数
+        topk: 50            # 持有50只股票
+        n_drop: 5           # 每日换仓5只
+        hold_thresh: 1      # 最少持有1天
+        risk_degree: 0.95   # 仓位比例
+
+# ── 回测配置 ──
+backtest:
+    benchmark: SH000300    # 沪深300基准
+    account: 100000000      # 初始资金 1亿
+    freq: day               # 日频交易

@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orange-quant"
+version = "0.1.0"
+description = "量化交易算法框架 — 基于 Microsoft qlib"
+requires-python = ">=3.8"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "yorange2" }
+]
+
+dependencies = [
+    "pyqlib",
+    "lightgbm",
+    "pandas",
+    "numpy",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = [
+    "jupyter",
+    "ipykernel",
+    "matplotlib",
+    "seaborn",
+    "black",
+    "isort",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["orange_quant*"]
