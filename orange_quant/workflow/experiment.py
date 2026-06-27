@@ -13,6 +13,7 @@ from typing import Optional
 
 import yaml
 import pandas as pd
+import mlflow
 
 import qlib
 from qlib import init
@@ -186,6 +187,10 @@ class QuantExperiment:
         predictions = trainer.predict(segment="test")
 
         # ── Step 4: 记录实验 ──
+        # 结束数据加载阶段可能启动的 mlflow run，避免嵌套冲突
+        if mlflow.active_run():
+            mlflow.end_run()
+
         with R.start(experiment_name="orange_quant_exp"):
             R.log_params(
                 instruments=self.instruments,
@@ -205,9 +210,6 @@ class QuantExperiment:
 
             # 回测
             strategy = MomentumTopKStrategy(
-                signal="<PRED>",
-                topk=50,
-                n_drop=5,
                 **self.strategy_params,
             )
 

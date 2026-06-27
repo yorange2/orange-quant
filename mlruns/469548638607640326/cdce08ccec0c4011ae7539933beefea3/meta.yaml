@@ -1,0 +1,14 @@
+artifact_uri: file:///Users/yuanchengcheng/Documents/GitHub/orange-quant/mlruns/469548638607640326/cdce08ccec0c4011ae7539933beefea3/artifacts
+end_time: 1782543427470
+entry_point_name: ''
+experiment_id: '469548638607640326'
+lifecycle_stage: active
+run_id: cdce08ccec0c4011ae7539933beefea3
+run_name: mlflow_recorder
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1782543427182
+status: 3
+tags: []
+user_id: yuanchengcheng

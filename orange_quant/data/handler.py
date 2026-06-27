@@ -53,30 +53,21 @@ class Alpha158Custom(Alpha158):
         """
         self._extra_fields = extra_fields or []
 
-        # 如果有额外字段，追加到 Alpha158 的字段列表
-        if self._extra_fields:
-            # Alpha158 默认字段定义在父类中
-            super().__init__(
-                instruments=instruments,
-                start_time=start_time,
-                end_time=end_time,
-                fit_start_time=fit_start_time,
-                fit_end_time=fit_end_time,
-                infer_processors=infer_processors,
-                learn_processors=learn_processors,
-                **kwargs,
-            )
-        else:
-            super().__init__(
-                instruments=instruments,
-                start_time=start_time,
-                end_time=end_time,
-                fit_start_time=fit_start_time,
-                fit_end_time=fit_end_time,
-                infer_processors=infer_processors,
-                learn_processors=learn_processors,
-                **kwargs,
-            )
+        # 构建传给父类的参数，避免传入 None 覆盖父类默认值
+        parent_kwargs = {
+            "instruments": instruments,
+            "start_time": start_time,
+            "end_time": end_time,
+            "fit_start_time": fit_start_time,
+            "fit_end_time": fit_end_time,
+        }
+        if infer_processors is not None:
+            parent_kwargs["infer_processors"] = infer_processors
+        if learn_processors is not None:
+            parent_kwargs["learn_processors"] = learn_processors
+        parent_kwargs.update(kwargs)
+
+        super().__init__(**parent_kwargs)
 
     def get_feature_config(self):
         """可重写此方法添加自定义因子表达式。"""
