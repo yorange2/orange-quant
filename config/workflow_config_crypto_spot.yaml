@@ -1,8 +1,9 @@
 # =============================================================
-# Orange Quant 加密货币实验 — 187 个币种
+# Orange Quant 加密货币实验 — U 现货 (13 币种)
 # =============================================================
-# 数据来源: Hyperliquid Perpetual Futures (2023-06 ~ 2026-06)
-# 币种: 187 个 (自动过滤 k 前缀微盘币 + 数据不足 365 天的)
+# 数据: Hyperliquid 合约日线 (价格与现货 1:1)
+# 交易: Hyperliquid U 封装现货 (UBTC, UETH, USOL...)
+# 成本: 纯现货费率，无资金费率
 # =============================================================
 
 qlib_init:
@@ -30,7 +31,7 @@ model:
         num_boost_round: 300
         early_stopping_rounds: 30
         learning_rate: 0.03
-        num_leaves: 64            # 187个币种，可以用更多叶子
+        num_leaves: 64
         feature_fraction: 0.7
         bagging_fraction: 0.7
         bagging_freq: 1
@@ -44,8 +45,8 @@ strategy:
     module_path: orange_quant.strategies.mom_topk
     kwargs:
         signal: <PRED>
-        topk: 30               # 持仓30只
-        n_drop: 5               # 每日换5只
+        topk: 30
+        n_drop: 5
         hold_thresh: 1
         risk_degree: 0.95
 
@@ -53,11 +54,11 @@ backtest:
     benchmark: BTC
     account: 1000000
     freq: day
-    # 永续合约交易成本（Hyperliquid perp taker 0.05% + 预估资金费率）
+    # 现货成本（U 封装代币，0.05% taker fee ×2，无资金费率）
     exchange_kwargs:
         freq: day
-        limit_threshold: 1.0        # crypto 无涨跌停
+        limit_threshold: 1.0
         deal_price: close
-        open_cost: 0.0005           # 开仓 taker 0.05%
-        close_cost: 0.0008          # 平仓 taker 0.05% + 日均资金费率 ~0.03%
+        open_cost: 0.0005
+        close_cost: 0.0005
         min_cost: 0
