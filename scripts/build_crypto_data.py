@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from orange_quant.data.crypto_download import download_crypto_data
 
-CRYPTO_DATA_DIR = Path.home() / ".qlib" / "qlib_data" / "crypto"
+CRYPTO_DATA_DIR = Path("data/qlib_data/crypto")
 RAW_DATA_DIR = Path("data/crypto_raw")
 QLIB_REPO = Path("/Users/yuanchengcheng/Documents/GitHub/qlib")
 

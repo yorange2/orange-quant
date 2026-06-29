@@ -9,8 +9,9 @@ __pycache__/
 dist/
 build/
 
-# qlib data directory
+# qlib data directories
 qlib_data/
+data/qlib_data/
 
 # IDE
 .vscode/

@@ -6,7 +6,7 @@
 # =============================================================
 
 qlib_init:
-    provider_uri: "~/.qlib/qlib_data/crypto"
+    provider_uri: "data/qlib_data/crypto"
     region: cn
 
 data:
