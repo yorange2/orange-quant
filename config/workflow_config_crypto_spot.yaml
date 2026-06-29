@@ -11,7 +11,7 @@ qlib_init:
     region: cn
 
 data:
-    instruments: all
+    instruments: u_spot     # 9 个有 U 封装现货的币种
 
 train:
     start: "2023-06-01"
@@ -31,13 +31,13 @@ model:
         num_boost_round: 300
         early_stopping_rounds: 30
         learning_rate: 0.03
-        num_leaves: 64
-        feature_fraction: 0.7
-        bagging_fraction: 0.7
+        num_leaves: 16            # 9币种，降低复杂度
+        feature_fraction: 0.6
+        bagging_fraction: 0.6
         bagging_freq: 1
-        min_data_in_leaf: 20
-        lambda_l1: 0.5
-        lambda_l2: 0.5
+        min_data_in_leaf: 10
+        lambda_l1: 1.0
+        lambda_l2: 1.0
         verbose_eval: 20
 
 strategy:
@@ -45,8 +45,8 @@ strategy:
     module_path: orange_quant.strategies.mom_topk
     kwargs:
         signal: <PRED>
-        topk: 30
-        n_drop: 5
+        topk: 5                # 9币种中持有前5
+        n_drop: 2               # 每日换2只
         hold_thresh: 1
         risk_degree: 0.95
 
