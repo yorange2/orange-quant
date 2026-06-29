@@ -1,13 +1,8 @@
 # =============================================================
-# Orange Quant 加密货币实验 (优化版)
+# Orange Quant 加密货币实验 — 187 个币种
 # =============================================================
-# 数据来源: Hyperliquid Perpetual Futures
-# 币种: BTC, ETH, XRP, BNB, SOL
-# =============================================================
-# 优化点:
-#   - 训练期加长 (10% 验证)
-#   - 减少 LightGBM 复杂度，防止过拟合
-#   - 只用 Alpha158 的基础因子（过滤相关性过高的因子）
+# 数据来源: Hyperliquid Perpetual Futures (2023-06 ~ 2026-06)
+# 币种: 187 个 (自动过滤 k 前缀微盘币 + 数据不足 365 天的)
 # =============================================================
 
 qlib_init:
@@ -27,22 +22,21 @@ test:
     start: "2026-05-16"
     end: "2026-06-27"
 
-# 模型: 降低复杂度，加正则化
 model:
     class: LightGBMTrainer
     module_path: orange_quant.models.trainer
     kwargs:
         loss: mse
-        num_boost_round: 200
-        early_stopping_rounds: 20
-        learning_rate: 0.02
-        num_leaves: 8            # 5个币种，叶子数不能多
-        feature_fraction: 0.5    # 只用50%特征，防过拟合
-        bagging_fraction: 0.5
+        num_boost_round: 300
+        early_stopping_rounds: 30
+        learning_rate: 0.03
+        num_leaves: 64            # 187个币种，可以用更多叶子
+        feature_fraction: 0.7
+        bagging_fraction: 0.7
         bagging_freq: 1
-        min_data_in_leaf: 10     # 叶子最少样本数
-        lambda_l1: 1.0           # L1 正则化
-        lambda_l2: 1.0           # L2 正则化
+        min_data_in_leaf: 20
+        lambda_l1: 0.5
+        lambda_l2: 0.5
         verbose_eval: 20
 
 strategy:
@@ -50,8 +44,8 @@ strategy:
     module_path: orange_quant.strategies.mom_topk
     kwargs:
         signal: <PRED>
-        topk: 3
-        n_drop: 1
+        topk: 30               # 持仓30只
+        n_drop: 5               # 每日换5只
         hold_thresh: 1
         risk_degree: 0.95
 

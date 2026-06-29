@@ -17,7 +17,7 @@ from pathlib import Path
 # 将项目根目录加入 path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from orange_quant.data.crypto_download import download_crypto_data, DEFAULT_COINS
+from orange_quant.data.crypto_download import download_crypto_data
 
 CRYPTO_DATA_DIR = Path.home() / ".qlib" / "qlib_data" / "crypto"
 RAW_DATA_DIR = Path("data/crypto_raw")
