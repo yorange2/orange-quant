@@ -11,6 +11,10 @@ numpy
 # 配置管理
 pyyaml
 
+# 交易执行
+ccxt
+python-dotenv
+
 # 可选：深度学习
 # torch
 

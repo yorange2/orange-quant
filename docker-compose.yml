@@ -1,0 +1,39 @@
+version: "3.8"
+
+services:
+  orange-quant:
+    build: .
+    image: orange-quant:latest
+    container_name: orange-quant
+    restart: unless-stopped
+
+    # 挂载 .env（含 API key）
+    env_file:
+      - .env
+
+    # 默认每日 00:15 UTC 调仓（北京时间 08:15）
+    command: ["--hour", "0", "--minute", "15"]
+
+    # 日志
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # DRY RUN 模式（观察用，不下单）
+  orange-quant-dry:
+    build: .
+    image: orange-quant:latest
+    container_name: orange-quant-dry
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: ["--dry-run", "--hour", "0", "--minute", "15"]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    profiles:
+      - dry-run
