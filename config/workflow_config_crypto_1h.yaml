@@ -1,0 +1,63 @@
+# =============================================================
+# Orange Quant 加密货币实验 — 1小时 (Binance 数据)
+# =============================================================
+# 数据来源: Binance 公开 API
+# 币种: 9 (AVAX, BTC, DOGE, ENA, ETH, S, SOL, WLD, ZEC)
+# 样本: 219,953 条时线 (2023-06 ~ 2026-06)
+# =============================================================
+
+qlib_init:
+    provider_uri: "data/qlib_data/crypto_1h"
+    region: cn
+
+data:
+    instruments: all
+
+train:
+    start: "2023-06-01"
+    end: "2026-03-31"
+valid:
+    start: "2026-04-01"
+    end: "2026-05-15"
+test:
+    start: "2026-05-16"
+    end: "2026-06-27"
+
+model:
+    class: LightGBMTrainer
+    module_path: orange_quant.models.trainer
+    kwargs:
+        loss: mse
+        num_boost_round: 500
+        early_stopping_rounds: 50
+        learning_rate: 0.03
+        num_leaves: 64
+        feature_fraction: 0.7
+        bagging_fraction: 0.7
+        bagging_freq: 1
+        min_data_in_leaf: 100
+        lambda_l1: 0.5
+        lambda_l2: 0.5
+        verbose_eval: 50
+
+strategy:
+    class: MomentumTopKStrategy
+    module_path: orange_quant.strategies.mom_topk
+    kwargs:
+        signal: <PRED>
+        topk: 5
+        n_drop: 2
+        hold_thresh: 1
+        risk_degree: 0.95
+
+backtest:
+    benchmark: BTC
+    account: 1000000
+    freq: day
+    exchange_kwargs:
+        freq: day
+        limit_threshold: 1.0
+        deal_price: close
+        open_cost: 0.0005
+        close_cost: 0.0005
+        min_cost: 0
