@@ -1,0 +1,61 @@
+# =============================================================
+# Orange Quant 加密货币实验 (优化版)
+# =============================================================
+# 数据来源: Hyperliquid Perpetual Futures
+# 币种: BTC, ETH, XRP, BNB, SOL
+# =============================================================
+# 优化点:
+#   - 训练期加长 (10% 验证)
+#   - 减少 LightGBM 复杂度，防止过拟合
+#   - 只用 Alpha158 的基础因子（过滤相关性过高的因子）
+# =============================================================
+
+qlib_init:
+    provider_uri: "~/.qlib/qlib_data/crypto"
+    region: cn
+
+data:
+    instruments: all
+
+train:
+    start: "2023-06-01"
+    end: "2026-03-31"
+valid:
+    start: "2026-04-01"
+    end: "2026-05-15"
+test:
+    start: "2026-05-16"
+    end: "2026-06-27"
+
+# 模型: 降低复杂度，加正则化
+model:
+    class: LightGBMTrainer
+    module_path: orange_quant.models.trainer
+    kwargs:
+        loss: mse
+        num_boost_round: 200
+        early_stopping_rounds: 20
+        learning_rate: 0.02
+        num_leaves: 8            # 5个币种，叶子数不能多
+        feature_fraction: 0.5    # 只用50%特征，防过拟合
+        bagging_fraction: 0.5
+        bagging_freq: 1
+        min_data_in_leaf: 10     # 叶子最少样本数
+        lambda_l1: 1.0           # L1 正则化
+        lambda_l2: 1.0           # L2 正则化
+        verbose_eval: 20
+
+strategy:
+    class: MomentumTopKStrategy
+    module_path: orange_quant.strategies.mom_topk
+    kwargs:
+        signal: <PRED>
+        topk: 3
+        n_drop: 1
+        hold_thresh: 1
+        risk_degree: 0.95
+
+backtest:
+    benchmark: BTC
+    account: 1000000
+    freq: day
