@@ -33,5 +33,6 @@ Thumbs.db
 # MLflow tracking
 mlruns/
 
-# Raw crypto data (downloaded from Hyperliquid)
+# Raw crypto data (downloaded from Hyperliquid / Binance)
 data/crypto_raw/
+data/crypto_raw_1h/
