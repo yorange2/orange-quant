@@ -226,14 +226,14 @@ class QuantExperiment:
                     "end_time": self.test_end,
                     "account": 100000000,  # 初始资金 1亿
                     "benchmark": self.backtest_params.get("benchmark", "SH000300"),
-                    "exchange_kwargs": {
+                    "exchange_kwargs": self.backtest_params.get("exchange_kwargs", {
                         "freq": "day",
                         "limit_threshold": 0.095,
                         "deal_price": "close",
                         "open_cost": 0.0005,
                         "close_cost": 0.0015,
                         "min_cost": 5,
-                    },
+                    }),
                 },
                 "strategy": self.strategy_config,
             }
@@ -416,14 +416,14 @@ def run_dl_from_yaml(config_path: str = "config/workflow_config_dl_lstm.yaml") -
                 "end_time": test_end,
                 "account": 100000000,
                 "benchmark": benchmark,
-                "exchange_kwargs": {
+                "exchange_kwargs": backtest_cfg.get("exchange_kwargs", {
                     "freq": "day",
                     "limit_threshold": 0.095,
                     "deal_price": "close",
                     "open_cost": 0.0005,
                     "close_cost": 0.0015,
                     "min_cost": 5,
-                },
+                }),
             },
             "strategy": strategy_cfg,
         }

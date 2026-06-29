@@ -53,3 +53,11 @@ backtest:
     benchmark: BTC
     account: 1000000
     freq: day
+    # 现货交易成本（Hyperliquid spot taker fee 0.05%）
+    exchange_kwargs:
+        freq: day
+        limit_threshold: 1.0        # crypto 无涨跌停
+        deal_price: close
+        open_cost: 0.0005           # 买入 taker 0.05%
+        close_cost: 0.0005          # 卖出 taker 0.05%
+        min_cost: 0                 # 无最低佣金
