@@ -1,0 +1,63 @@
+# =============================================================
+# Orange Quant Binance 现货实验 — 42 币种
+# =============================================================
+# 数据来源: Binance 公开 API (2020-01 ~ 2026-06)
+# 币种: 42 (成交量前50，剔除数据不足365天及稳定币)
+# 成本: 现货 taker 0.1% ×2 (Binance 标准费率)
+# =============================================================
+
+qlib_init:
+    provider_uri: "data/qlib_data/binance"
+    region: cn
+
+data:
+    instruments: bluechips       # 20 个蓝筹币种 (1800+ 天历史)
+
+train:
+    start: "2020-01-01"
+    end: "2025-06-30"
+valid:
+    start: "2025-07-01"
+    end: "2026-01-31"
+test:
+    start: "2026-02-01"
+    end: "2026-06-27"
+
+model:
+    class: LightGBMTrainer
+    module_path: orange_quant.models.trainer
+    kwargs:
+        loss: mse
+        num_boost_round: 500
+        early_stopping_rounds: 50
+        learning_rate: 0.03
+        num_leaves: 64
+        feature_fraction: 0.7
+        bagging_fraction: 0.7
+        bagging_freq: 1
+        min_data_in_leaf: 50
+        lambda_l1: 0.5
+        lambda_l2: 0.5
+        verbose_eval: 50
+
+strategy:
+    class: MomentumTopKStrategy
+    module_path: orange_quant.strategies.mom_topk
+    kwargs:
+        signal: <PRED>
+        topk: 12               # 20币种中持有前12
+        n_drop: 3               # 每日换3只
+        hold_thresh: 1
+        risk_degree: 0.95
+
+backtest:
+    benchmark: BTC
+    account: 1000000
+    freq: day
+    exchange_kwargs:
+        freq: day
+        limit_threshold: 1.0
+        deal_price: close
+        open_cost: 0.001            # Binance spot taker 0.1%
+        close_cost: 0.001           # Binance spot taker 0.1%
+        min_cost: 0
