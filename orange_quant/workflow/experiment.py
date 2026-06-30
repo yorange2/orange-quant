@@ -201,7 +201,6 @@ class QuantExperiment:
                 test_period=f"{self.test_start}_{self.test_end}",
                 **self.model_params,
             )
-            R.save_objects(**{"lgb_model.pkl": trainer.model})
 
             # 信号记录
             sr = SignalRecord(trainer.model, dataset, recorder)
@@ -263,9 +262,23 @@ def run_from_yaml(config_path: str = "config/csi300-lgb-momtopk.yaml") -> dict:
     可直接在 notebook 或脚本中调用：
         from orange_quant.workflow.experiment import run_from_yaml
         results = run_from_yaml("config/csi300-lgb-momtopk.yaml")
+
+    训练完成后自动将模型导出到 models/{config_name}.pkl。
     """
+    import pickle
+
     experiment = QuantExperiment.from_yaml(config_path)
-    return experiment.run()
+    results = experiment.run()
+
+    # 自动导出模型到 models/
+    model_path = Path("models")
+    model_path.mkdir(parents=True, exist_ok=True)
+    config_name = Path(config_path).stem  # e.g. "csi300-lgb-momtopk"
+    output_path = model_path / f"{config_name}.pkl"
+    pickle.dump(results["trainer"].model, open(output_path, "wb"))
+    print(f"💾 模型已导出至 {output_path}")
+
+    return results
 
 
 def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> dict:
@@ -391,8 +404,6 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
             test_period=f"{test_start}_{test_end}",
             **model_kwargs,
         )
-        R.save_objects(**{f"{model_name.lower()}_model.pkl": trainer.model})
-
         # 信号记录
         sr = SignalRecord(trainer.model, dataset, recorder)
         sr.generate()
@@ -435,8 +446,19 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
     print(f"✅ {model_name} 实验完成！")
     print("=" * 60 + "\n")
 
-    return {
+    results = {
         "trainer": trainer,
         "predictions": predictions,
         "recorder": recorder,
     }
+
+    # 自动导出模型到 models/
+    import pickle
+    model_dir = Path("models")
+    model_dir.mkdir(parents=True, exist_ok=True)
+    config_name = Path(config_path).stem  # e.g. "csi300-lstm-momtopk"
+    output_path = model_dir / f"{config_name}.pkl"
+    pickle.dump(trainer.model, open(output_path, "wb"))
+    print(f"💾 模型已导出至 {output_path}")
+
+    return results

@@ -107,7 +107,7 @@ def main():
     parser.add_argument("--topk", type=int, default=DEFAULT_TOP_K, help="持仓数量")
     parser.add_argument("--lookback", type=int, default=DEFAULT_LOOKBACK, help="回看天数")
     parser.add_argument("--min-trade", type=float, default=DEFAULT_MIN_TRADE, help="最小交易金额 USDT")
-    parser.add_argument("--model", type=str, default="models/binance20_lgb.pkl", help="LightGBM 模型路径")
+    parser.add_argument("--model", type=str, default="models/binance-lgb-momtopk.pkl", help="LightGBM 模型路径")
     args = parser.parse_args()
 
     # 信号处理

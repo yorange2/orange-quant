@@ -54,22 +54,15 @@ results = run_dl_from_yaml('config/csi300-lstm-momtopk.yaml')
 - **Information Ratio** (>1.0 优秀)
 - **最大回撤**
 
-## 导出模型
+## 模型导出
 
-训练完成后，模型自动保存在 `mlruns/` 中。导出用于实盘交易：
+训练完成后，模型**自动导出**到 `models/` 目录，文件名与配置一致：
 
 ```bash
-source .venv/bin/activate
-python -c "
-import qlib, pickle
-qlib.init(provider_uri='data/qlib_data/binance', region='cn')
-from qlib.workflow import R
-exp = R.list_experiments().get('orange_quant_exp')
-for rid in exp.info['recorders'][-5:]:
-    r = exp.get_recorder(rid)
-    if 'lgb_model.pkl' in r.list_artifacts():
-        model = r.load_object('lgb_model.pkl')
-        pickle.dump(model, open('models/binance20_lgb.pkl', 'wb'))
-        print(f'Model exported from {rid}')
-"
+# 训练后自动生成:
+config/binance-lgb-momtopk.yaml  →  models/binance-lgb-momtopk.pkl
+config/csi300-lgb-momtopk.yaml   →  models/csi300-lgb-momtopk.pkl
+config/csi300-lstm-momtopk.yaml  →  models/csi300-lstm-momtopk.pkl
 ```
+
+实盘交易直接加载对应 pkl 文件即可。

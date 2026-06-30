@@ -38,8 +38,8 @@ docker run --rm --env-file .env orange-quant:latest --once
 # DRY RUN 模式（只分析不下单）
 docker run --rm --env-file .env orange-quant:latest --once --dry-run
 
-# 使用 LightGBM 模型预测（动量默认）
-docker run --rm --env-file .env orange-quant:latest --once --model models/binance20_lgb.pkl
+# 使用 LightGBM 模型预测（默认 momentum，模型可选）
+docker run --rm --env-file .env orange-quant:latest --once --model models/binance-lgb-momtopk.pkl
 
 # 停止
 docker compose down
@@ -54,7 +54,7 @@ docker compose down
 | `--topk` | 5 | 持仓数量 |
 | `--dry-run` | - | 只分析不下单 |
 | `--once` | - | 执行一次退出 |
-| `--model` | models/binance20_lgb.pkl | LightGBM 模型路径 |
+| `--model` | models/binance-lgb-momtopk.pkl | LightGBM 模型路径 |
 
 ## 本地测试
 

@@ -5,7 +5,7 @@ LightGBM 模型预测器
 从 Binance 实时 OHLCV 数据生成预测排名。
 
 使用方式：
-    predictor = ModelPredictor(model_path="models/binance20_lgb.pkl")
+    predictor = ModelPredictor(model_path="models/binance-lgb-momtopk.pkl")
     scores = predictor.predict(broker, coins=["BTC", "ETH", ...])
 """
 
