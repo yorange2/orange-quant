@@ -16,6 +16,9 @@ services:
     # 使用 LightGBM 模型预测，如不需要可删除 --model 参数（退化为动量策略）
     command: ["--hour", "0", "--minute", "15", "--model", "models/binance-lgb-momtopk.pkl"]
 
+    profiles:
+      - live
+
     logging:
       driver: "json-file"
       options:
