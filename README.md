@@ -9,7 +9,7 @@ orange-quant/
 ├── orange_quant/               # 核心包
 
 
-│   ├── strategies/             # 策略层：动量TopK 策略
+
 │   ├── backtest/               # 回测层：回测运行器
 │   ├── trading/                # 交易层：Binance 自动交易
 │   └── workflow/               # 实验管理：YAML 配置驱动
@@ -110,22 +110,6 @@ docker run --rm --env-file .env orange-quant:latest --once --dry-run
 | `--dry-run` | — | 只分析不下单 |
 | `--once` | — | 执行一次后退出 |
 | `--testnet` | — | 使用 Binance 测试网 |
-
-## 开发自定义策略
-
-继承 `BaseQuantStrategy`，实现 `generate_trade_decision` 方法：
-
-```python
-from orange_quant.strategies.base import BaseQuantStrategy
-from qlib.backtest.decision import Order, TradeDecisionWO
-
-class MyStrategy(BaseQuantStrategy):
-    def generate_trade_decision(self, execute_result=None):
-        orders = [
-            Order(stock_id="SH600000", amount=100, direction=Order.BUY),
-        ]
-        return TradeDecisionWO(orders, self)
-```
 
 ## 许可
 

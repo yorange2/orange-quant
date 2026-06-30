@@ -33,8 +33,6 @@ test:
 
 # ── 模型配置（orange_quant LightGBM 训练器） ──
 model:
-    class: LightGBMTrainer
-    module_path: orange_quant.models.trainer
     kwargs:
         loss: mse
         num_boost_round: 500
@@ -48,8 +46,8 @@ model:
 
 # ── 策略配置（orange_quant 动量TopK策略） ──
 strategy:
-    class: MomentumTopKStrategy
-    module_path: orange_quant.strategies.mom_topk
+    class: TopkDropoutStrategy
+    module_path: qlib.contrib.strategy.signal_strategy
     kwargs:
         signal: <PRED>     # 使用模型预测分数
         topk: 50            # 持有50只股票

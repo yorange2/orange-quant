@@ -44,7 +44,6 @@ KNOWN_DL_MODULES = {
     "ADD": "qlib.contrib.model.pytorch_add",
     "Sandwich": "qlib.contrib.model.pytorch_sandwich",
 }
-from ..strategies.mom_topk import MomentumTopKStrategy
 
 
 class QuantExperiment:

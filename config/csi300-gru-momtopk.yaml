@@ -38,8 +38,8 @@ dataset:
     step_len: 20
 
 strategy:
-    class: MomentumTopKStrategy
-    module_path: orange_quant.strategies.mom_topk
+    class: TopkDropoutStrategy
+    module_path: qlib.contrib.strategy.signal_strategy
     kwargs:
         signal: <PRED>
         topk: 50
