@@ -7,14 +7,17 @@ services:
     container_name: orange-quant
     restart: unless-stopped
 
-    # 挂载 .env（含 API key）
     env_file:
       - .env
 
-    # 默认每日 00:15 UTC 调仓（北京时间 08:15）
-    command: ["--hour", "0", "--minute", "15"]
+    # 挂载模型文件（将训练好的 pkl 放到 ./models/ 目录下）
+    volumes:
+      - ./models:/app/models
 
-    # 日志
+    # 默认每日 00:15 UTC 调仓（北京时间 08:15）
+    # 使用 LightGBM 模型预测，如不需要可删除 --model 参数（退化为动量策略）
+    command: ["--hour", "0", "--minute", "15", "--model", "models/binance-lgb-momtopk.pkl"]
+
     logging:
       driver: "json-file"
       options:
@@ -29,7 +32,9 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    command: ["--dry-run", "--hour", "0", "--minute", "15"]
+    volumes:
+      - ./models:/app/models
+    command: ["--dry-run", "--hour", "0", "--minute", "15", "--model", "models/binance-lgb-momtopk.pkl"]
     logging:
       driver: "json-file"
       options:

@@ -16,7 +16,6 @@ RUN pip install --no-cache-dir -r requirements-server.txt
 # 复制项目代码
 COPY orange_quant/ ./orange_quant/
 COPY scripts/biance/ ./scripts/biance/
-COPY models/ ./models/
 
 # 健康检查
 HEALTHCHECK --interval=6h --timeout=30s --retries=3 \
