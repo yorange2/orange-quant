@@ -8,7 +8,6 @@
 
 qlib_init:
     provider_uri: "data/qlib_data/binance"
-    region: cn
 
 data:
     instruments: bluechips       # 20 个蓝筹币种 (1800+ 天历史)

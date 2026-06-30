@@ -23,11 +23,28 @@ from qlib.data.dataset import DatasetH
 from qlib.data.dataset.handler import DataHandlerLP
 from qlib.utils import init_instance_by_config
 
-from ..data.handler import Alpha158Custom
-from ..models.trainer import LightGBMTrainer
-from ..models.dl_trainer import DLTrainer, KNOWN_DL_MODULES
+from qlib.contrib.data.handler import Alpha158
+from qlib.contrib.model.gbdt import LGBModel
+# 已知的 qlib PyTorch 模型 module 路径
+KNOWN_DL_MODULES = {
+    "LSTM": "qlib.contrib.model.pytorch_lstm_ts",
+    "GRU": "qlib.contrib.model.pytorch_gru_ts",
+    "Transformer": "qlib.contrib.model.pytorch_transformer_ts",
+    "ALSTM": "qlib.contrib.model.pytorch_alstm_ts",
+    "GATs": "qlib.contrib.model.pytorch_gats_ts",
+    "TCN": "qlib.contrib.model.pytorch_tcn_ts",
+    "TRA": "qlib.contrib.model.pytorch_tra",
+    "Localformer": "qlib.contrib.model.pytorch_localformer_ts",
+    "SFM": "qlib.contrib.model.pytorch_sfm",
+    "KRNN": "qlib.contrib.model.pytorch_krnn",
+    "HIST": "qlib.contrib.model.pytorch_hist",
+    "IGMTF": "qlib.contrib.model.pytorch_igmtf",
+    "TCTS": "qlib.contrib.model.pytorch_tcts",
+    "ADARNN": "qlib.contrib.model.pytorch_adarnn",
+    "ADD": "qlib.contrib.model.pytorch_add",
+    "Sandwich": "qlib.contrib.model.pytorch_sandwich",
+}
 from ..strategies.mom_topk import MomentumTopKStrategy
-from ..backtest.runner import BacktestRunner
 
 
 class QuantExperiment:
@@ -164,7 +181,7 @@ class QuantExperiment:
 
         # ── Step 2: 构建数据集 ──
         print(f"[orange_quant] 加载数据: {self.instruments}")
-        handler = Alpha158Custom(
+        handler = Alpha158(
             instruments=self.instruments,
             start_time=self.train_start,
             end_time=self.test_end,
@@ -184,9 +201,9 @@ class QuantExperiment:
               f"valid={self.valid_start}~{self.valid_end}, test={self.test_start}~{self.test_end}")
 
         # ── Step 3: 训练模型 ──
-        trainer = LightGBMTrainer(dataset=dataset, **self.model_params)
-        trainer.fit()
-        predictions = trainer.predict(segment="test")
+        model = LGBModel(**self.model_params)
+        model.fit(dataset)
+        predictions = model.predict(dataset, segment="test")
 
         # ── Step 4: 记录实验 ──
         # 结束数据加载阶段可能启动的 mlflow run，避免嵌套冲突
@@ -203,7 +220,7 @@ class QuantExperiment:
             )
 
             # 信号记录
-            sr = SignalRecord(trainer.model, dataset, recorder)
+            sr = SignalRecord(model, dataset, recorder)
             sr.generate()
 
             # 信号分析（IC、Rank IC、Long-Short 收益）
@@ -249,7 +266,7 @@ class QuantExperiment:
         print("=" * 60 + "\n")
 
         return {
-            "trainer": trainer,
+            "model": model,
             "predictions": predictions,
             "recorder": recorder,
         }
@@ -275,7 +292,7 @@ def run_from_yaml(config_path: str = "config/csi300-lgb-momtopk.yaml") -> dict:
     model_path.mkdir(parents=True, exist_ok=True)
     config_name = Path(config_path).stem  # e.g. "csi300-lgb-momtopk"
     output_path = model_path / f"{config_name}.pkl"
-    pickle.dump(results["trainer"].model, open(output_path, "wb"))
+    pickle.dump(results["model"], open(output_path, "wb"))
     print(f"💾 模型已导出至 {output_path}")
 
     return results
@@ -382,13 +399,21 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
     print(f"[orange_quant] TSDatasetH 构建完成, step_len={step_len}")
 
     # ── Step 3: 训练模型 ──
-    trainer = DLTrainer(
-        model_name=model_name,
-        dataset=dataset,
-        **model_kwargs,
-    )
-    trainer.fit()
-    predictions = trainer.predict(segment="test")
+    module_path = KNOWN_DL_MODULES.get(model_name)
+    if module_path is None:
+        raise ValueError(
+            f"未知模型 '{model_name}'。已知模型: {list(KNOWN_DL_MODULES.keys())}"
+        )
+    import importlib
+    module = importlib.import_module(module_path)
+    model_cls = getattr(module, model_name)
+    model = model_cls(**model_kwargs)
+
+    print(f"[orange_quant] 开始训练 {model_name} 模型...")
+    model.fit(dataset)
+    print(f"[orange_quant] {model_name} 训练完成！")
+
+    predictions = model.predict(dataset, segment="test")
 
     # ── Step 4: 记录实验 ──
     if mlflow.active_run():
@@ -405,7 +430,7 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
             **model_kwargs,
         )
         # 信号记录
-        sr = SignalRecord(trainer.model, dataset, recorder)
+        sr = SignalRecord(model, dataset, recorder)
         sr.generate()
 
         # 信号分析
@@ -447,7 +472,7 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
     print("=" * 60 + "\n")
 
     results = {
-        "trainer": trainer,
+        "model": model,
         "predictions": predictions,
         "recorder": recorder,
     }
@@ -458,7 +483,7 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
     model_dir.mkdir(parents=True, exist_ok=True)
     config_name = Path(config_path).stem  # e.g. "csi300-lstm-momtopk"
     output_path = model_dir / f"{config_name}.pkl"
-    pickle.dump(trainer.model, open(output_path, "wb"))
+    pickle.dump(model, open(output_path, "wb"))
     print(f"💾 模型已导出至 {output_path}")
 
     return results

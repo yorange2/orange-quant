@@ -7,8 +7,8 @@
 ```
 orange-quant/
 ├── orange_quant/               # 核心包
-│   ├── data/                   # 数据层：下载 + Alpha 因子
-│   ├── models/                 # 模型层：LightGBM + DL 训练器
+
+
 │   ├── strategies/             # 策略层：动量TopK 策略
 │   ├── backtest/               # 回测层：回测运行器
 │   ├── trading/                # 交易层：Binance 自动交易
