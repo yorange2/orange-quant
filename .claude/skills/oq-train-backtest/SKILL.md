@@ -15,8 +15,8 @@ description: 训练 LightGBM 模型并运行回测，输出 IC、收益率、夏
 
 | 配置 | 标的 | IC | 说明 |
 |------|------|-----|------|
-| `workflow_config.yaml` | A 股 CSI300 (820) | 0.027 | Alpha158 + LightGBM |
-| `workflow_config_binance.yaml` | Binance 20 蓝筹 | ~0.02 | Binance 现货成本 |
+| `csi300-lgb-momtopk.yaml` | A 股 CSI300 (820) | 0.027 | Alpha158 + LightGBM |
+| `binance-lgb-momtopk.yaml` | Binance 20 蓝筹 | ~0.02 | Binance 现货成本 |
 
 ## 运行
 
@@ -26,7 +26,7 @@ description: 训练 LightGBM 模型并运行回测，输出 IC、收益率、夏
 source .venv/bin/activate
 python -c "
 from orange_quant.workflow.experiment import run_from_yaml
-results = run_from_yaml('config/workflow_config_binance.yaml')
+results = run_from_yaml('config/binance-lgb-momtopk.yaml')
 r = results['recorder']
 print('IC:', {k:v for k,v in r.list_metrics().items() if 'IC' in k})
 print('Excess return:', {k:v for k,v in r.list_metrics().items() if 'annualized' in k})
@@ -46,7 +46,7 @@ jupyter notebook notebooks/01_quickstart.ipynb    # A 股入门
 source .venv/bin/activate
 python -c "
 from orange_quant.workflow.experiment import run_dl_from_yaml
-results = run_dl_from_yaml('config/workflow_config_dl_lstm.yaml')
+results = run_dl_from_yaml('config/csi300-lstm-momtopk.yaml')
 "
 ```
 

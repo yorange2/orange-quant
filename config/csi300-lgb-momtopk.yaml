@@ -2,7 +2,7 @@
 # Orange Quant 工作流配置文件
 # =============================================================
 # 用法：
-#   python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/workflow_config.yaml')"
+#   python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/csi300-lgb-momtopk.yaml')"
 # =============================================================
 
 # ── qlib 初始化 ──

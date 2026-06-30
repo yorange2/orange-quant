@@ -40,7 +40,7 @@ class QuantExperiment:
     使用方式：
 
         # 方式一：从 YAML 配置加载
-        experiment = QuantExperiment.from_yaml("config/workflow_config.yaml")
+        experiment = QuantExperiment.from_yaml("config/csi300-lgb-momtopk.yaml")
         experiment.run()
 
         # 方式二：编程式构建
@@ -256,19 +256,19 @@ class QuantExperiment:
         }
 
 
-def run_from_yaml(config_path: str = "config/workflow_config.yaml") -> dict:
+def run_from_yaml(config_path: str = "config/csi300-lgb-momtopk.yaml") -> dict:
     """
     从 YAML 配置运行实验的便捷函数。
 
     可直接在 notebook 或脚本中调用：
         from orange_quant.workflow.experiment import run_from_yaml
-        results = run_from_yaml("config/workflow_config.yaml")
+        results = run_from_yaml("config/csi300-lgb-momtopk.yaml")
     """
     experiment = QuantExperiment.from_yaml(config_path)
     return experiment.run()
 
 
-def run_dl_from_yaml(config_path: str = "config/workflow_config_dl_lstm.yaml") -> dict:
+def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> dict:
     """
     从 YAML 配置运行深度学习实验的便捷函数。
 
@@ -278,7 +278,7 @@ def run_dl_from_yaml(config_path: str = "config/workflow_config_dl_lstm.yaml") -
 
     使用方式：
         from orange_quant.workflow.experiment import run_dl_from_yaml
-        results = run_dl_from_yaml("config/workflow_config_dl_lstm.yaml")
+        results = run_dl_from_yaml("config/csi300-lstm-momtopk.yaml")
 
     Parameters
     ----------

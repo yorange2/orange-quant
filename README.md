@@ -14,8 +14,8 @@ orange-quant/
 │   ├── trading/                # 交易层：Binance 自动交易
 │   └── workflow/               # 实验管理：YAML 配置驱动
 ├── config/                     # 实验配置文件
-│   ├── workflow_config.yaml            # A 股 CSI300
-│   └── workflow_config_binance.yaml    # Binance 20 蓝筹
+│   ├── csi300-lgb-momtopk.yaml            # A 股 CSI300 × LightGBM
+│   └── binance-lgb-momtopk.yaml        # Binance 20 蓝筹 × LightGBM
 ├── notebooks/                  # Jupyter 教程
 ├── scripts/                    # 工具脚本
 │   ├── build_binance_data.py       # 构建 Binance 数据集
@@ -44,11 +44,11 @@ brew install libomp                       # macOS: LightGBM 依赖
 ```bash
 # A 股数据
 python scripts/download_data.py
-python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/workflow_config.yaml')"
+python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/csi300-lgb-momtopk.yaml')"
 
 # Binance 现货数据（50 币种）
 python scripts/build_binance_data.py --top 50
-python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/workflow_config_binance.yaml')"
+python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/binance-lgb-momtopk.yaml')"
 ```
 
 ## 实验结果
