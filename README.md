@@ -98,6 +98,13 @@ docker logs -f orange-quant             # 日志
 docker compose down                     # 停止
 ```
 
+### 升级
+
+```bash
+git pull
+docker compose up -d --build    # 重新构建并替换旧容器
+```
+
 ### 参数说明
 
 | 参数 | 默认值 | 说明 |
