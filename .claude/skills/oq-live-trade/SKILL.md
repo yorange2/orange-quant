@@ -1,68 +1,36 @@
 ---
 name: oq-live-trade
-description: 实盘/模拟自动交易，支持 Docker 长期运行和本地测试
+description: 本地实盘/模拟自动交易，支持分析和下单
 ---
 
 # Live Trading
 
-实盘/模拟自动交易。支持 Docker 长期运行和本地测试。
+本地实盘/模拟自动交易。支持分析和下单两种模式。
 
 ## 触发条件
 - "实盘交易" / "下单" / "调仓" / "trade"
-- "启动交易服务器" / "start trading"
 - "查看持仓" / "check positions"
 
 ## 前置条件
 
 1. `.env` 文件已配置 `BINANCE_API_KEY` 和 `BIANCE_SECRET_KEY`
-2. Docker 已安装并运行
 
-## Docker 部署（推荐，长期运行）
-
-### 构建并启动
-
-```bash
-cd /Users/yuanchengcheng/Documents/GitHub/orange-quant
-docker compose up -d --build
-```
-
-### 常用操作
-
-```bash
-# 查看日志
-docker logs -f orange-quant
-
-# 手动执行一次调仓
-docker run --rm --env-file .env orange-quant:latest --once
-
-# DRY RUN 模式（只分析不下单）
-docker run --rm --env-file .env orange-quant:latest --once --dry-run
-
-# 使用 LightGBM 模型预测（默认 momentum，模型可选）
-docker run --rm --env-file .env orange-quant:latest --once --model models/binance-lgb-momtopk.pkl
-
-# 停止
-docker compose down
-```
-
-### 参数
-
-| 参数 | 默认 | 说明 |
-|------|------|------|
-| `--hour` | 0 | 调仓 UTC 小时 |
-| `--minute` | 15 | 调仓 UTC 分钟 |
-| `--topk` | 5 | 持仓数量 |
-| `--dry-run` | - | 只分析不下单 |
-| `--once` | - | 执行一次退出 |
-| `--model` | models/binance-lgb-momtopk.pkl | LightGBM 模型路径 |
-
-## 本地测试
+## 运行
 
 ```bash
 source .venv/bin/activate
-python scripts/run_binance_testnet.py --dry-run     # 分析
-python scripts/run_binance_testnet.py --trade       # 实际下单
-python scripts/server_entrypoint.py --once --dry-run # 单次
+
+# DRY RUN 模式（只分析不下单，推荐先跑）
+python scripts/run_binance_testnet.py --dry-run
+
+# 实际下单
+python scripts/run_binance_testnet.py --trade
+
+# 单次执行
+python scripts/server_entrypoint.py --once --dry-run
+
+# 使用 LightGBM 模型预测
+python scripts/server_entrypoint.py --once --model models/binance-lgb-momtopk.pkl
 ```
 
 ## 当前持仓
@@ -83,7 +51,6 @@ for a, amt in sorted(balances.items()):
 
 ## 安全提醒
 
-- 默认每日 08:15 北京时间调仓
 - 市价单，立即成交
 - 最小交易金额 $20 USDT（低于此值不交易）
 - 单币种最大仓位 25%
