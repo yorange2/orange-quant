@@ -1,6 +1,8 @@
-# Docker 交易服务器依赖（精简版）
+# Docker 交易服务器依赖
 ccxt
 pandas
 numpy
 python-dotenv
 pyyaml
+git+https://github.com/microsoft/qlib.git
+lightgbm

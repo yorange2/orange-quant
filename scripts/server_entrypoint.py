@@ -55,7 +55,7 @@ def on_signal(signum, frame):
     _shutdown = True
 
 
-def run_rebalance(broker, dry_run, topk, lookback, min_trade):
+def run_rebalance(broker, dry_run, topk, lookback, min_trade, model_path=None):
     """执行一次调仓"""
     try:
         runner = StrategyRunner(
@@ -64,6 +64,7 @@ def run_rebalance(broker, dry_run, topk, lookback, min_trade):
             topk=topk,
             lookback_days=lookback,
             min_trade_usdt=min_trade,
+            model_path=model_path,
         )
         result = runner.run_once(dry_run=dry_run)
 
@@ -106,6 +107,7 @@ def main():
     parser.add_argument("--topk", type=int, default=DEFAULT_TOP_K, help="持仓数量")
     parser.add_argument("--lookback", type=int, default=DEFAULT_LOOKBACK, help="回看天数")
     parser.add_argument("--min-trade", type=float, default=DEFAULT_MIN_TRADE, help="最小交易金额 USDT")
+    parser.add_argument("--model", type=str, default="models/binance20_lgb.pkl", help="LightGBM 模型路径")
     args = parser.parse_args()
 
     # 信号处理
@@ -134,7 +136,7 @@ def main():
 
     # 执行一次
     if args.once:
-        run_rebalance(broker, args.dry_run, args.topk, args.lookback, args.min_trade)
+        run_rebalance(broker, args.dry_run, args.topk, args.lookback, args.min_trade, args.model)
         return
 
     # ── 持续运行 ──
@@ -156,7 +158,7 @@ def main():
         if _shutdown:
             break
 
-        run_rebalance(broker, args.dry_run, args.topk, args.lookback, args.min_trade)
+        run_rebalance(broker, args.dry_run, args.topk, args.lookback, args.min_trade, args.model)
 
     logger.info("👋 服务器已安全退出")
 

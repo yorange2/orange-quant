@@ -33,6 +33,9 @@ Thumbs.db
 # MLflow tracking
 mlruns/
 
+# Trained models (too large)
+models/*.pkl
+
 # Raw crypto data (downloaded from Hyperliquid / Binance)
 data/crypto_raw/
 data/crypto_raw_1h/

@@ -41,24 +41,26 @@ class StrategyRunner:
         rebalance_interval_hours: int = 24,
         min_trade_usdt: float = 15.0,
         max_position_pct: float = 0.25,
+        model_path: Optional[str] = None,
     ):
         """
         Parameters
         ----------
         broker : BinanceBroker
-            交易所接口。
         coins : list[str]
-            交易币种（不含 USDT 后缀），如 ["BTC", "ETH"]。
+            交易币种（不含 USDT 后缀）。
         topk : int
-            持仓数量，持有排名前 topk 的币种。
+            持仓数量。
         lookback_days : int
-            动量计算回看天数。
+            动量/模型回看天数。
         rebalance_interval_hours : int
-            调仓间隔（小时），默认 24h。
+            调仓间隔，默认 24h。
         min_trade_usdt : float
-            单笔最小交易金额（USDT），低于此值不交易。
+            单笔最小交易金额。
         max_position_pct : float
             单币种最大仓位占比。
+        model_path : str or None
+            LightGBM 模型路径。None 使用动量策略。
         """
         self.broker = broker
         self.coins = coins
@@ -68,22 +70,32 @@ class StrategyRunner:
         self.rebalance_interval_hours = rebalance_interval_hours
         self.min_trade_usdt = min_trade_usdt
         self.max_position_pct = max_position_pct
+        self.model_path = model_path
 
-        # 当前持仓 {coin: amount_in_base}
         self.positions: Dict[str, float] = {}
         self.last_rebalance: Optional[datetime] = None
 
+        # 加载模型（如果提供）
+        self.predictor = None
+        if model_path:
+            from .model_predictor import ModelPredictor
+            self.predictor = ModelPredictor(model_path)
+
     def compute_signals(self) -> pd.DataFrame:
         """
-        计算动量信号。
+        计算信号（模型 > 动量）。
 
-        对每个币种获取近期 OHLCV，计算动量因子并排名。
+        如果加载了 LightGBM 模型，使用模型预测；
+        否则使用简单动量因子排名。
 
         Returns
         -------
         pd.DataFrame
-            columns: coin, price, momentum_score, rank
+            columns: coin, price, score, rank
         """
+        # 优先使用模型
+        if self.predictor is not None:
+            return self.predictor.predict(self.broker, self.coins, self.lookback_days)
         rows = []
         print(f"[runner] 获取 {len(self.symbols)} 个币种行情数据...")
         for sym, coin in zip(self.symbols, self.coins):
