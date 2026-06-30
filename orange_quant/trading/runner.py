@@ -141,7 +141,7 @@ class StrategyRunner:
         print(f"🔄 调仓检查 — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'='*50}")
 
-        # 1. 获取当前持仓
+        # 1. 获取当前持仓 + 计算总资产
         balances = self.broker.get_balances()
         usdt_balance = balances.get("USDT", 0.0)
         current_holdings = {
@@ -149,17 +149,26 @@ class StrategyRunner:
             for c in self.coins
             if c in balances
         }
+
+        # 获取所有持仓币种的价格，计算总资产
+        holding_coins = [c for c, a in current_holdings.items() if a > 0]
+        prices = {}
+        if holding_coins:
+            symbols = [f"{c}/USDT" for c in holding_coins]
+            prices = self.broker.get_current_prices(symbols)
+
+        holdings_value = 0.0
         print(f"\n💰 USDT 余额: {usdt_balance:.2f}")
-        print(f"📦 当前持仓: {len(current_holdings)} 个币种")
+        print(f"📦 当前持仓: {len(holding_coins)} 个币种")
         for coin, amt in current_holdings.items():
             if amt > 0:
-                sym = f"{coin}/USDT"
-                try:
-                    price = self.broker.get_current_prices([sym]).get(sym, 0)
-                    val = amt * price
-                    print(f"  {coin}: {amt:.4f} (≈${val:.2f})")
-                except:
-                    print(f"  {coin}: {amt:.4f}")
+                price = prices.get(f"{coin}/USDT", 0)
+                val = amt * price
+                holdings_value += val
+                print(f"  {coin}: {amt:.4f} (≈${val:.2f})")
+
+        total_equity = usdt_balance + holdings_value
+        print(f"💎 总资产: ${total_equity:,.2f}")
 
         # 2. 计算动量排名
         signals = self.compute_signals()
@@ -187,28 +196,44 @@ class StrategyRunner:
         if dry_run:
             print(f"\n⚠ DRY RUN — 仅分析，不实际下单")
         else:
-            # 卖出
+            # 卖出（跳过 dust）
             for coin in to_sell:
                 if coin in current_holdings:
                     amt = current_holdings[coin]
                     sym = f"{coin}/USDT"
+                    price = prices.get(sym, 0)
+                    # 检查是否达到最小交易量
+                    min_notional = _get_min_notional(self.broker.exchange, sym)
+                    if amt * price < min_notional:
+                        print(f"[runner] ⏭ 跳过卖出 {coin} {amt:.6f} (≈${amt*price:.2f}，低于最小 ${min_notional})")
+                        continue
                     result = self.broker.market_sell(sym, amt)
                     if result:
                         trades.append(("SELL", coin, amt))
 
-            # 买入
+            # 刷新余额（卖出后 USDT 增加）
+            time.sleep(1)
+            new_balances = self.broker.get_balances()
+            updated_usdt = new_balances.get("USDT", usdt_balance)
+
+            # 买入：基于总资产计算仓位
             if to_buy:
                 n_buy = len(to_buy)
-                # 留 5% 作为 buffer
-                budget_per_coin = (usdt_balance * 0.95) / n_buy
-                budget_per_coin = min(budget_per_coin, usdt_balance * self.max_position_pct)
+                n_total = len(target_coins)  # 总持仓数
+                if n_total > 0:
+                    budget_per_coin = (total_equity * 0.95) / n_total
+                else:
+                    budget_per_coin = (updated_usdt * 0.95) / n_buy
+                # 限制单币种不超过 max_position_pct
+                budget_per_coin = min(budget_per_coin, total_equity * self.max_position_pct)
 
                 for coin in to_buy:
-                    if budget_per_coin > self.min_trade_usdt:
+                    if budget_per_coin > self.min_trade_usdt and updated_usdt >= budget_per_coin:
                         sym = f"{coin}/USDT"
                         result = self.broker.market_buy(sym, budget_per_coin)
                         if result:
                             trades.append(("BUY", coin, budget_per_coin))
+                            updated_usdt -= budget_per_coin
 
         self.last_rebalance = datetime.now()
         return {
@@ -250,3 +275,15 @@ class StrategyRunner:
             print(f"\n⏰ 下次调仓: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
             print(f"   等待 {self.rebalance_interval_hours}h...\n")
             time.sleep(self.rebalance_interval_hours * 3600)
+
+
+def _get_min_notional(exchange, symbol: str) -> float:
+    """获取交易对的最小名义价值"""
+    try:
+        market = exchange.market(symbol)
+        min_notional = market.get("limits", {}).get("cost", {}).get("min", 0)
+        if min_notional is None:
+            min_notional = 10.0  # Binance 默认 $10
+        return float(min_notional)
+    except Exception:
+        return 10.0
