@@ -10,7 +10,6 @@ orange-quant/
 
 
 
-│   ├── backtest/               # 回测层：回测运行器
 │   ├── trading/                # 交易层：Binance 自动交易
 │   └── workflow/               # 实验管理：YAML 配置驱动
 ├── config/                     # 实验配置文件

@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements-server.txt
 
 # 复制项目代码
 COPY orange_quant/ ./orange_quant/
-COPY scripts/server_entrypoint.py ./scripts/
+COPY scripts/biance/ ./scripts/biance/
 COPY models/ ./models/
 
 # 健康检查
@@ -23,5 +23,5 @@ HEALTHCHECK --interval=6h --timeout=30s --retries=3 \
     CMD python -c "import ccxt; ccxt.binance().load_markets()" || exit 1
 
 # 每日 UTC 00:15 调仓
-ENTRYPOINT ["python", "scripts/server_entrypoint.py"]
+ENTRYPOINT ["python", "scripts/biance/execute.py"]
 CMD ["--hour", "0", "--minute", "15"]
