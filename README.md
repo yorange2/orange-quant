@@ -15,12 +15,9 @@ orange-quant/
 │   └── workflow/               # 实验管理：YAML 配置驱动
 ├── config/                     # 实验配置文件
 │   ├── workflow_config.yaml            # A 股 CSI300
-│   ├── workflow_config_crypto.yaml     # Crypto 187 合约
-│   ├── workflow_config_crypto_spot.yaml # Crypto 9 现货
 │   └── workflow_config_binance.yaml    # Binance 20 蓝筹
 ├── notebooks/                  # Jupyter 教程
 ├── scripts/                    # 工具脚本
-│   ├── build_crypto_data.py        # 构建 Crypto 数据集
 │   ├── build_binance_data.py       # 构建 Binance 数据集
 │   ├── server_entrypoint.py         # Docker 交易服务入口
 │   └── run_binance_testnet.py      # 交易测试
@@ -49,10 +46,6 @@ brew install libomp                       # macOS: LightGBM 依赖
 python scripts/download_data.py
 python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/workflow_config.yaml')"
 
-# Crypto 数据（187 币种，Hyperliquid 合约）
-python scripts/build_crypto_data.py
-python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/workflow_config_crypto.yaml')"
-
 # Binance 现货数据（50 币种）
 python scripts/build_binance_data.py --top 50
 python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/workflow_config_binance.yaml')"
@@ -63,8 +56,6 @@ python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_
 | 数据集 | 标的 | IC | 超额(含成本) | IR |
 |--------|------|-----|-------------|-----|
 | A 股 CSI300 | 820 | 0.027 | 1.0% | — |
-| Crypto 187 合约 | 187 | 0.043 | 49.5% | 1.75 |
-| Crypto 9 U现货 | 9 | 0.150 | 187.3% | 3.74 |
 | Binance 20 蓝筹 | 20 | ~0.02 | 17.3% | 0.77 |
 
 ## Docker 部署（自动交易）
