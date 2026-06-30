@@ -19,7 +19,7 @@ orange-quant/
 ├── scripts/                    # 工具脚本
 │   ├── build_binance_data.py       # 构建 Binance 数据集
 │   ├── server_entrypoint.py         # Docker 交易服务入口
-│   └── run_binance_testnet.py      # 交易测试
+│   └── server_entrypoint.py         # 交易入口
 ├── Dockerfile                  # Docker 镜像
 ├── docker-compose.yml          # 一键部署
 └── requirements.txt

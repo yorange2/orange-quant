@@ -21,13 +21,10 @@ description: 本地实盘/模拟自动交易，支持分析和下单
 source .venv/bin/activate
 
 # DRY RUN 模式（只分析不下单，推荐先跑）
-python scripts/run_binance_testnet.py --dry-run
-
-# 实际下单
-python scripts/run_binance_testnet.py --trade
-
-# 单次执行
 python scripts/server_entrypoint.py --once --dry-run
+
+# 实际下单（主网）
+python scripts/server_entrypoint.py --once
 
 # 使用 LightGBM 模型预测
 python scripts/server_entrypoint.py --once --model models/binance-lgb-momtopk.pkl
