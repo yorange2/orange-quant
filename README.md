@@ -91,8 +91,8 @@ mkdir -p models
 cp /path/to/binance-lgb-momtopk.pkl models/
 
 # 启动
-docker compose --profile live up -d     # 实盘
-docker compose --profile dry-run up -d  # 观察（不下单）
+docker compose --profile live up -d  --build    # 实盘
+docker compose --profile dry-run up -d  --build # 观察（不下单）
 docker logs -f orange-quant             # 日志
 docker compose down                     # 停止
 ```
