@@ -1,3 +1,8 @@
+---
+name: oq-setup-env
+description: 配置 orange-quant 开发/运行环境，安装所有依赖
+---
+
 # Setup Environment
 
 配置 orange-quant 开发/运行环境，安装所有依赖。

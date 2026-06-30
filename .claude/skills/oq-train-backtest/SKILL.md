@@ -1,3 +1,8 @@
+---
+name: oq-train-backtest
+description: 训练 LightGBM 模型并运行回测，输出 IC、收益率、夏普等指标
+---
+
 # Train & Backtest
 
 训练 LightGBM 模型并运行回测，输出 IC、收益率、夏普等指标。

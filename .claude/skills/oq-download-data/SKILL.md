@@ -1,3 +1,8 @@
+---
+name: oq-download-data
+description: 下载量化实验所需的数据集，支持 A 股、Crypto、Binance 三种数据源
+---
+
 # Download Datasets
 
 下载量化实验所需的数据集。支持 A 股、Crypto (Hyperliquid)、Binance 三种数据源。

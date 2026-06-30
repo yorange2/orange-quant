@@ -1,3 +1,8 @@
+---
+name: oq-live-trade
+description: 实盘/模拟自动交易，支持 Docker 长期运行和本地测试
+---
+
 # Live Trading
 
 实盘/模拟自动交易。支持 Docker 长期运行和本地测试。
