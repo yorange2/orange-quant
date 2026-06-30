@@ -7,6 +7,8 @@ WORKDIR /app
 # LightGBM 需要 libgomp1
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
+    git \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # 安装依赖（pyqlib 从 PyPI）

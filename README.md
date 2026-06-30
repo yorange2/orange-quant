@@ -19,8 +19,7 @@ orange-quant/
 │   └── csi300/
 │       └── build_data.py       # 下载 A 股数据
 ├── Dockerfile
-├── docker-compose.yml
-└── requirements.txt
+└── docker-compose.yml
 ```
 
 ## 快速开始

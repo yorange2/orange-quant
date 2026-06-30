@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import requests
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 _BINANCE_API = "https://api.binance.com/api/v3"
 RAW_DIR = Path("data/binance_raw")
