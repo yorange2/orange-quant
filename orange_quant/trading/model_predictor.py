@@ -10,7 +10,6 @@ LightGBM 模型预测器
 """
 
 import pickle
-import json
 import warnings
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -26,7 +25,7 @@ class ModelPredictor:
     LightGBM 模型预测器。
 
     用 qlib 的 Alpha158 特征引擎从 OHLCV 计算 158 个因子，
-    加载训练好的 LGBModel 进行预测。
+    加载训练好的 LGBModel，通过 qlib DatasetH 接口进行预测。
     """
 
     def __init__(self, model_path: str):
@@ -43,7 +42,7 @@ class ModelPredictor:
         self,
         broker: BinanceBroker,
         coins: List[str],
-        lookback_days: int = 90,
+        lookback_days: int = 160,
     ) -> pd.DataFrame:
         """
         使用模型预测，返回币种排名。
@@ -54,7 +53,7 @@ class ModelPredictor:
         coins : list[str]
             币种列表（不含 USDT）。
         lookback_days : int
-            回看天数（Alpha158 至少需要 60 天）。
+            回看天数（Alpha158 至少需要 90 天，推荐 ≥ 160）。
 
         Returns
         -------
@@ -64,15 +63,17 @@ class ModelPredictor:
         if self.model is None:
             raise RuntimeError("模型未加载")
 
-        # 1. 获取 OHLCV
+        # 1. 从 Binance 获取 OHLCV
         print(f"[predictor] 获取 {len(coins)} 个币种 {lookback_days} 天数据...")
         records = []
+        latest_prices = {}  # coin → 最新收盘价
         for coin in coins:
             sym = f"{coin}/USDT"
             try:
                 df = broker.fetch_ohlcv(sym, "1d", limit=lookback_days)
                 if len(df) < 60:
                     continue
+                latest_prices[coin] = float(df["close"].iloc[-1])
                 df["instrument"] = coin
                 df = df.reset_index()
                 records.append(df)
@@ -83,28 +84,26 @@ class ModelPredictor:
             print("[predictor] ⚠ 有效数据不足")
             return pd.DataFrame()
 
-        # 2. 构建 qlib 特征
-        print(f"[predictor] 计算 Alpha158 + 模型预测...")
         raw_df = pd.concat(records, ignore_index=True)
         raw_df = raw_df.rename(columns={"datetime": "date"})
 
-        # 用 qlib 的 D.features 计算特征
+        # 2. 构建 qlib DatasetH（Alpha158 特征 + 数据接口）
+        print(f"[predictor] 计算 Alpha158 + 模型预测...")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            features_df = self._compute_alpha158(raw_df, coins)
+            dataset, latest_date = self._create_dataset(raw_df, coins)
 
-        # 3. 取最新一天的预测
-        latest = features_df.index.get_level_values("datetime").max()
-        X = features_df.xs(latest, level="datetime")
-
-        # 4. 预测
+        # 3. 用 qlib LGBModel.predict() 标准接口推理
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            scores = self.model.predict(X)
+            scores = self.model.predict(dataset, segment="pred")
 
+        # scores 的 index 是 MultiIndex (datetime, instrument)，提取 instrument
+        coins_pred = [idx[1] for idx in scores.index]
         result = pd.DataFrame({
-            "coin": X.index,
-            "score": scores.values.flatten() if hasattr(scores, "values") else scores,
+            "coin": coins_pred,
+            "score": scores.values,
+            "price": [latest_prices.get(c, 0) for c in coins_pred],
         })
         result["rank"] = result["score"].rank(ascending=False)
         result = result.sort_values("score", ascending=False)
@@ -112,25 +111,30 @@ class ModelPredictor:
         print(f"[predictor] ✅ Top 5: {result.head(5)['coin'].tolist()}")
         return result
 
-    def _compute_alpha158(self, raw_df, coins):
-        """用 qlib 的 Alpha158 处理器计算特征"""
+    def _create_dataset(self, raw_df, coins):
+        """
+        用 qlib Alpha158 handler 构建 DatasetH。
+
+        Returns
+        -------
+        dataset : DatasetH
+            qlib 数据集，segment "pred" 对应最新一天。
+        latest_date : str
+            最新日期字符串。
+        """
         import qlib
-        from qlib.data import D
+        from qlib.data.dataset import DatasetH
         from qlib.contrib.data.handler import Alpha158
 
-        # 计算日期范围
         start = str(raw_df["date"].min().strftime("%Y-%m-%d"))
         end = str(raw_df["date"].max().strftime("%Y-%m-%d"))
 
-        # 用 qlib 初始化已有数据目录（模型训练时的 provider），
-        # 这样 Alpha158 的 fit 参数（标准化用的均值和标准差）能复用
+        # 初始化 qlib，指向本地 binance 数据目录
         try:
             qlib.init(provider_uri="data/qlib_data/binance", region="cn", auto_mount=False)
         except Exception:
-            # 如果本地没有 qlib 数据，用空配置
             pass
 
-        # 创建 handler 计算特征
         handler = Alpha158(
             instruments=list(coins),
             start_time=start,
@@ -139,7 +143,14 @@ class ModelPredictor:
             fit_end_time=end,
         )
 
-        # 获取特征 DataFrame
-        # handler 内部会用 D.features() 计算
+        # 获取全部特征，找到最新日期
         features = handler.fetch(col_set="feature")
-        return features
+        latest_date = str(features.index.get_level_values("datetime").max().strftime("%Y-%m-%d"))
+
+        # 用 handler 构建 DatasetH，segment "pred" 精确对应最新日期
+        dataset = DatasetH(
+            handler=handler,
+            segments={"pred": (latest_date, latest_date)},
+        )
+
+        return dataset, latest_date

@@ -37,7 +37,7 @@ class StrategyRunner:
         broker: BinanceBroker,
         coins: List[str],
         topk: int = 5,
-        lookback_days: int = 30,
+        lookback_days: int = 160,
         rebalance_interval_hours: int = 24,
         min_trade_usdt: float = 15.0,
         max_position_pct: float = 0.25,
