@@ -1,7 +1,7 @@
 ---
 name: oq-train-backtest
 description: 训练 LightGBM 模型并运行回测，输出 IC、收益率、夏普等指标
-argument-hint: "[config-name]"
+argument-hint: "[config]"
 ---
 
 # Train & Backtest
@@ -16,8 +16,8 @@ argument-hint: "[config-name]"
 
 | 配置 | 标的 | IC | 说明 |
 |------|------|-----|------|
-| `csi300-lgb-momtopk.yaml` | A 股 CSI300 (820) | 0.027 | Alpha158 + LightGBM |
-| `binance-lgb-momtopk.yaml` | Binance 20 蓝筹 | ~0.02 | Binance 现货成本 |
+| `csi300-lgb-momtopk` | A 股 CSI300 (820) | 0.027 | Alpha158 + LightGBM |
+| `binance-lgb-momtopk` | Binance 20 蓝筹 | ~0.02 | Binance 现货成本 |
 
 ## 运行
 
@@ -57,13 +57,12 @@ results = run_dl_from_yaml('config/csi300-lstm-momtopk.yaml')
 
 ## 模型导出
 
-训练完成后，模型**自动导出**到 `models/` 目录，文件名与配置一致：
+训练完成后，模型**自动导出**到 `models/` 目录：
 
-```bash
-# 训练后自动生成:
-config/binance-lgb-momtopk.yaml  →  models/binance-lgb-momtopk.pkl
-config/csi300-lgb-momtopk.yaml   →  models/csi300-lgb-momtopk.pkl
-config/csi300-lstm-momtopk.yaml  →  models/csi300-lstm-momtopk.pkl
+```
+binance-lgb-momtopk  →  models/binance-lgb-momtopk.pkl
+csi300-lgb-momtopk   →  models/csi300-lgb-momtopk.pkl
+csi300-lstm-momtopk  →  models/csi300-lstm-momtopk.pkl
 ```
 
 实盘交易直接加载对应 pkl 文件即可。

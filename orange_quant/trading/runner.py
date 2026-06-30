@@ -192,9 +192,12 @@ class StrategyRunner:
             print(f"  {row['rank']:.0f}. {row['coin']:8s}  "
                   f"score={row['score']:.4f}  price=\${row['price']:.4f}")
 
-        # 3. 决定买卖
+        # 3. 决定买卖（排除 dust：市值低于最小交易额的仓位视为未持有）
         target_coins = set(signals.head(self.topk)["coin"])
-        current_coins = set(current_holdings.keys())
+        current_coins = {
+            c for c, amt in current_holdings.items()
+            if amt * prices.get(f"{c}/USDT", 0) >= self.min_trade_usdt
+        }
 
         to_buy = target_coins - current_coins
         to_sell = current_coins - target_coins
