@@ -7,8 +7,8 @@
 3. 转换为 qlib 二进制格式
 
 用法：
-    python scripts/build_binance_data.py          # 默认前50
-    python scripts/build_binance_data.py --top 100  # 前100
+    python scripts/biance/build_data.py          # 默认前50
+    python scripts/biance/build_data.py --top 100  # 前100
 """
 
 import sys

@@ -17,9 +17,11 @@ orange-quant/
 │   ├── csi300-lgb-momtopk.yaml            # A 股 CSI300 × LightGBM
 │   └── binance-lgb-momtopk.yaml        # Binance 20 蓝筹 × LightGBM
 ├── scripts/                    # 工具脚本
-│   ├── build_binance_data.py       # 构建 Binance 数据集
-│   ├── server_entrypoint.py         # Docker 交易服务入口
-│   └── server_entrypoint.py         # 交易入口
+│   ├── biance/
+│   │   ├── build_data.py          # 构建 Binance 数据集
+│   │   └── execute.py             # 交易执行入口
+│   └── csi300/
+│       └── build_data.py          # 下载 A 股数据
 ├── Dockerfile                  # Docker 镜像
 ├── docker-compose.yml          # 一键部署
 └── requirements.txt
@@ -42,11 +44,11 @@ brew install libomp                       # macOS: LightGBM 依赖
 
 ```bash
 # A 股数据
-python scripts/download_data.py
+python scripts/csi300/build_data.py
 python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/csi300-lgb-momtopk.yaml')"
 
 # Binance 现货数据（50 币种）
-python scripts/build_binance_data.py --top 50
+python scripts/biance/build_data.py --top 50
 python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/binance-lgb-momtopk.yaml')"
 ```
 

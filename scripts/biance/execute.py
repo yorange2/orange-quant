@@ -4,10 +4,10 @@ Orange Quant 自动交易服务器
 
 在 Docker 中长期运行，每日定时调仓。
 用法：
-    python scripts/server_entrypoint.py                    # 默认每日 00:15 UTC 调仓
-    python scripts/server_entrypoint.py --hour 8 --minute 0  # 每日 08:00 UTC
-    python scripts/server_entrypoint.py --dry-run           # 只分析不下单
-    python scripts/server_entrypoint.py --once             # 执行一次后退出
+    python scripts/biance/execute.py                    # 默认每日 00:15 UTC 调仓
+    python scripts/biance/execute.py --hour 8 --minute 0  # 每日 08:00 UTC
+    python scripts/biance/execute.py --dry-run           # 只分析不下单
+    python scripts/biance/execute.py --once             # 执行一次后退出
 """
 
 import sys
