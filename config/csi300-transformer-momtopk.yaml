@@ -20,7 +20,7 @@ test:
     end: "2020-08-01"
 
 model:
-    name: Transformer
+    name: TransformerModel
     kwargs:
         d_feat: 20
         hidden_size: 64

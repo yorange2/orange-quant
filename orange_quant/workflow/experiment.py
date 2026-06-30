@@ -29,7 +29,7 @@ from qlib.contrib.model.gbdt import LGBModel
 KNOWN_DL_MODULES = {
     "LSTM": "qlib.contrib.model.pytorch_lstm_ts",
     "GRU": "qlib.contrib.model.pytorch_gru_ts",
-    "Transformer": "qlib.contrib.model.pytorch_transformer_ts",
+    "TransformerModel": "qlib.contrib.model.pytorch_transformer_ts",
     "ALSTM": "qlib.contrib.model.pytorch_alstm_ts",
     "GATs": "qlib.contrib.model.pytorch_gats_ts",
     "TCN": "qlib.contrib.model.pytorch_tcn_ts",
