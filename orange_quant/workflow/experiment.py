@@ -45,7 +45,7 @@ class QuantExperiment:
 
         # 方式二：编程式构建
         experiment = QuantExperiment(
-            provider_uri="~/.qlib/qlib_data/cn_data",
+            provider_uri="data/qlib_data/cn_data",
             instruments="csi300",
             train_start="2010-01-01",
             train_end="2014-12-31",
@@ -59,7 +59,7 @@ class QuantExperiment:
 
     def __init__(
         self,
-        provider_uri: str = "~/.qlib/qlib_data/cn_data",
+        provider_uri: str = "data/qlib_data/cn_data",
         region: str = "cn",
         instruments: str = "csi300",
         train_start: str = "2010-01-01",
@@ -131,7 +131,7 @@ class QuantExperiment:
         backtest_cfg = config.get("backtest", {})
 
         return cls(
-            provider_uri=qlib_config.get("provider_uri", "~/.qlib/qlib_data/cn_data"),
+            provider_uri=qlib_config.get("provider_uri", "data/qlib_data/cn_data"),
             region=qlib_config.get("region", "cn"),
             instruments=data_config.get("instruments", "csi300"),
             train_start=train_config.get("start", "2010-01-01"),
@@ -311,7 +311,7 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
     strategy_cfg = config.get("strategy", {})
     backtest_cfg = config.get("backtest", {})
 
-    provider_uri = str(Path(qlib_cfg.get("provider_uri", "~/.qlib/qlib_data/cn_data")).expanduser())
+    provider_uri = str(Path(qlib_cfg.get("provider_uri", "data/qlib_data/cn_data")).expanduser())
     region = qlib_cfg.get("region", "cn")
     instruments = data_cfg.get("instruments", "csi300")
     train_start = train_cfg.get("start", "2008-01-01")

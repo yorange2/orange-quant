@@ -7,7 +7,7 @@
 
 # ── qlib 初始化 ──
 qlib_init:
-    provider_uri: "~/.qlib/qlib_data/cn_data"  # qlib 数据目录
+    provider_uri: "data/qlib_data/cn_data"  # qlib 数据目录
     region: cn                                   # A股市场
 
 # ── 数据配置 ──

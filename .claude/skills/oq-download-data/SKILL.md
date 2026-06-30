@@ -20,7 +20,7 @@ source .venv/bin/activate
 python scripts/csi300/build_data.py
 ```
 
-数据存放: `~/.qlib/qlib_data/cn_data/`（约 1-2 GB）
+数据存放: `data/qlib_data/cn_data/`（约 1-2 GB）
 
 ### Binance 现货日线（Top 50 成交量）
 

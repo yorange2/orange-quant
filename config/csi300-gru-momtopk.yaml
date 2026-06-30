@@ -3,7 +3,7 @@
 # =============================================================
 
 qlib_init:
-    provider_uri: "~/.qlib/qlib_data/cn_data"
+    provider_uri: "data/qlib_data/cn_data"
     region: cn
 
 data:
