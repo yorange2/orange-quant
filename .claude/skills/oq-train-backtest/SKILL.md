@@ -33,13 +33,6 @@ print('Excess return:', {k:v for k,v in r.list_metrics().items() if 'annualized'
 "
 ```
 
-### Notebook 方式
-
-```bash
-source .venv/bin/activate
-jupyter notebook notebooks/01_quickstart.ipynb    # A 股入门
-```
-
 ### 深度学习实验（LSTM/GRU/Transformer）
 
 ```bash

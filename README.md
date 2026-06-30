@@ -16,7 +16,6 @@ orange-quant/
 ├── config/                     # 实验配置文件
 │   ├── csi300-lgb-momtopk.yaml            # A 股 CSI300 × LightGBM
 │   └── binance-lgb-momtopk.yaml        # Binance 20 蓝筹 × LightGBM
-├── notebooks/                  # Jupyter 教程
 ├── scripts/                    # 工具脚本
 │   ├── build_binance_data.py       # 构建 Binance 数据集
 │   ├── server_entrypoint.py         # Docker 交易服务入口
