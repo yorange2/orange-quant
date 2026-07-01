@@ -8,9 +8,10 @@ services:
     env_file:
       - .env
 
-    # 挂载模型文件（将训练好的 pkl 放到 ./models/ 目录下）
+    # 挂载模型和数据（需先在服务器上下载好）
     volumes:
       - ./models:/app/models
+      - ./data/qlib_data/binance:/app/data/qlib_data/binance
 
     # 默认每日 00:15 UTC 调仓（北京时间 08:15）
     # 使用 LightGBM 模型预测，如不需要可删除 --model 参数（退化为动量策略）
@@ -35,7 +36,8 @@ services:
       - .env
     volumes:
       - ./models:/app/models
-    command: ["--dry-run", "--hour", "0", "--minute", "15", "--model", "models/binance-lgb-momtopk.pkl"]
+      - ./data/qlib_data/binance:/app/data/qlib_data/binance
+    command: ["--dry-run", "--hour", "6", "--minute", "00", "--model", "models/binance-lgb-momtopk.pkl"]
     logging:
       driver: "json-file"
       options:

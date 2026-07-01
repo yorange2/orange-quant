@@ -86,9 +86,14 @@ BINANCE_API_KEY=你的api_key
 BIANCE_SECRET_KEY=你的secret_key
 EOF
 
-# 放入模型文件
+# 下载数据 + 放入模型文件
+python scripts/biance/build_data.py --top 50
 mkdir -p models
 cp /path/to/binance-lgb-momtopk.pkl models/
+
+# 上传到服务器
+scp -r models data/qlib_data/binance user@服务器:~/orange-quant/
+# 或直接在服务器上运行 build_data 和训练得到模型
 
 # 启动
 docker compose --profile live up -d  --build    # 实盘
