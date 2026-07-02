@@ -55,6 +55,22 @@ def on_signal(signum, frame):
     _shutdown = True
 
 
+def retrain_model(model_path: str):
+    """增量更新数据 + 重新训练模型"""
+    import subprocess
+    logger.info("📥 增量更新数据...")
+    project_root = Path(__file__).resolve().parent.parent.parent
+    subprocess.run(
+        [sys.executable, "scripts/biance/build_data.py"],
+        check=True, cwd=project_root,
+    )
+    config_name = Path(model_path).stem
+    logger.info(f"🚀 重新训练: {config_name}")
+    from orange_quant.workflow.experiment import run_from_yaml
+    run_from_yaml(f"config/{config_name}.yaml")
+    logger.info("✅ 模型已更新")
+
+
 def run_rebalance(broker, dry_run, topk, lookback, min_trade, model_path=None):
     """执行一次调仓"""
     try:
@@ -108,6 +124,7 @@ def main():
     parser.add_argument("--lookback", type=int, default=DEFAULT_LOOKBACK, help="回看天数")
     parser.add_argument("--min-trade", type=float, default=DEFAULT_MIN_TRADE, help="最小交易金额 USDT")
     parser.add_argument("--model", type=str, default="models/binance-lgb-momtopk.pkl", help="LightGBM 模型路径")
+    parser.add_argument("--retrain", action="store_true", help="调仓前先更新数据并重新训练模型")
     args = parser.parse_args()
 
     # 信号处理
@@ -134,8 +151,11 @@ def main():
         logger.error(f"交易所连接失败: {e}")
         sys.exit(1)
 
+
     # 执行一次
     if args.once:
+        if args.retrain:
+            retrain_model(args.model)
         run_rebalance(broker, args.dry_run, args.topk, args.lookback, args.min_trade, args.model)
         return
 
@@ -158,6 +178,8 @@ def main():
         if _shutdown:
             break
 
+        if args.retrain:
+            retrain_model(args.model)
         run_rebalance(broker, args.dry_run, args.topk, args.lookback, args.min_trade, args.model)
 
     logger.info("👋 服务器已安全退出")
