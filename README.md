@@ -15,6 +15,7 @@ orange-quant/
 ├── scripts/                    # 工具脚本
 │   ├── biance/
 │   │   ├── build_data.py       # 构建 Binance 数据集
+│   │   ├── train.py             # 训练 LightGBM 模型
 │   │   └── execute.py          # 交易执行入口
 │   └── csi300/
 │       └── build_data.py       # 下载 A 股数据

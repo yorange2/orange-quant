@@ -25,13 +25,8 @@ argument-hint: "[config]"
 
 ```bash
 source .venv/bin/activate
-python -c "
-from orange_quant.workflow.experiment import run_from_yaml
-results = run_from_yaml('config/binance-lgb-momtopk.yaml')
-r = results['recorder']
-print('IC:', {k:v for k,v in r.list_metrics().items() if 'IC' in k})
-print('Excess return:', {k:v for k,v in r.list_metrics().items() if 'annualized' in k})
-"
+python scripts/biance/train.py binance-lgb-momtopk
+python scripts/biance/train.py csi300-lgb-momtopk
 ```
 
 ### 深度学习实验（LSTM/GRU/Transformer）
