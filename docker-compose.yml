@@ -11,7 +11,7 @@ services:
     # 挂载模型和数据（需先在服务器上下载好）
     volumes:
       - ./models:/app/models
-      - ./data/qlib_data/binance:/app/data/qlib_data/binance
+      - ./data:/app/data
 
     # 默认每日 00:15 UTC 调仓（北京时间 08:15）
     # 使用 LightGBM 模型预测，如不需要可删除 --model 参数（退化为动量策略）
@@ -36,8 +36,8 @@ services:
       - .env
     volumes:
       - ./models:/app/models
-      - ./data/qlib_data/binance:/app/data/qlib_data/binance
-    command: ["--retrain", "--dry-run", "--hour", "05", "--minute", "35", "--model", "models/binance-lgb-momtopk.pkl"]
+      - ./data:/app/data
+    command: ["--retrain", "--dry-run", "--hour", "09", "--minute", "01", "--model", "models/binance-lgb-momtopk.pkl"]
     logging:
       driver: "json-file"
       options:
