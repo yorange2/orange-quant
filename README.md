@@ -122,6 +122,7 @@ docker compose up -d --build    # 重新构建并替换旧容器
 | `--dry-run` | — | 只分析不下单 |
 | `--once` | — | 执行一次后退出 |
 | `--testnet` | — | 使用 Binance 测试网 |
+| `--retrain` | — | 调仓前更新数据并重新训练模型 |
 
 ## 许可
 
