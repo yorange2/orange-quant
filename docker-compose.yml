@@ -37,7 +37,7 @@ services:
     volumes:
       - ./models:/app/models
       - ./data/qlib_data/binance:/app/data/qlib_data/binance
-    command: ["--retrain", "--dry-run", "--hour", "0", "--minute", "11", "--model", "models/binance-lgb-momtopk.pkl"]
+    command: ["--retrain", "--dry-run", "--hour", "05", "--minute", "35", "--model", "models/binance-lgb-momtopk.pkl"]
     logging:
       driver: "json-file"
       options:

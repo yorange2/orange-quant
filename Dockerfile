@@ -2,6 +2,8 @@ FROM python:3.11-slim
 
 LABEL description="Orange Quant Auto Trading Server"
 
+ENV MLFLOW_ALLOW_FILE_STORE=true
+
 WORKDIR /app
 
 # LightGBM 需要 libgomp1
