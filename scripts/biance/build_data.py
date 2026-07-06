@@ -152,6 +152,7 @@ def _rebuild_qlib():
             return
 
     # 手动构建 features（dump_bin 失败时的兜底）
+    # qlib 二进制格式: {field}.{freq}.bin, 文件头4字节为 start_index, 后续为 float32 值
     import numpy as np
     features_dir = QLIB_DIR / "features"
     for csv_file in RAW_DIR.glob("*.csv"):
@@ -160,7 +161,10 @@ def _rebuild_qlib():
         coin_dir = features_dir / coin
         coin_dir.mkdir(parents=True, exist_ok=True)
         for field in ["open", "close", "high", "low", "volume", "factor"]:
-            df[field].values.astype(np.float32).tofile(str(coin_dir / f"day.{field}.bin"))
+            values = df[field].values.astype(np.float32)
+            # qlib expects [start_index (float32)] + [values...]
+            data = np.hstack([0, values]).astype("<f")
+            data.tofile(str(coin_dir / f"{field}.day.bin"))
 
 
 def main():
