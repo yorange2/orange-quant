@@ -21,6 +21,9 @@ RUN pip install --no-cache-dir -r requirements-server.txt
 COPY biance_lgb_momtopk/ ./biance_lgb_momtopk/
 COPY config/ ./config/
 
+# 初始化空 git 仓库，消除 qlib recorder 的 git diff 警告
+RUN git init && git config user.email "docker@orange-quant" && git config user.name "Docker"
+
 # 健康检查
 HEALTHCHECK --interval=6h --timeout=30s --retries=3 \
     CMD python -c "import ccxt; ccxt.binance().load_markets()" || exit 1
