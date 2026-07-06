@@ -31,38 +31,52 @@ QLIB_DIR = Path("data/qlib_data/binance")
 
 def _find_dump_bin() -> Path | None:
     """动态查找 qlib 的 dump_bin.py 脚本路径"""
-    import importlib
     # 方式一：从已安装的 qlib 包中查找
     try:
         import qlib
-        qlib_path = Path(qlib.__file__).resolve().parent.parent
-        candidate = qlib_path / "scripts" / "dump_bin.py"
+        qlib_root = Path(qlib.__file__).resolve().parent.parent
+        candidate = qlib_root / "scripts" / "dump_bin.py"
+        print(f"  [find_dump_bin] qlib 包路径: {qlib_root}")
         if candidate.exists():
+            print(f"  [find_dump_bin] ✅ 找到 (via qlib.__file__): {candidate}")
             return candidate
-    except (ImportError, AttributeError):
-        pass
+        else:
+            print(f"  [find_dump_bin] 未找到 scripts/dump_bin.py 在 qlib 包中")
+    except (ImportError, AttributeError) as e:
+        print(f"  [find_dump_bin] qlib 导入失败: {e}")
 
-    # 方式二：常见安装位置
+    # 方式二：遍历 sys.path
+    print(f"  [find_dump_bin] 遍历 sys.path ({len(sys.path)} 个路径)...")
     for site in sys.path:
         p = Path(site) / "qlib" / "scripts" / "dump_bin.py"
         if p.exists():
+            print(f"  [find_dump_bin] ✅ 找到 (via sys.path): {p}")
             return p
 
     # 方式三：pip show 查找
+    print(f"  [find_dump_bin] 尝试 pip show qlib...")
     try:
         result = subprocess.run(
             [sys.executable, "-m", "pip", "show", "qlib"],
             capture_output=True, text=True, timeout=10,
         )
-        for line in result.stdout.splitlines():
-            if line.startswith("Location:"):
-                loc = line.split(":", 1)[1].strip()
-                p = Path(loc) / "qlib" / "scripts" / "dump_bin.py"
-                if p.exists():
-                    return p
-    except Exception:
-        pass
+        if result.returncode != 0:
+            print(f"  [find_dump_bin] pip show 失败: {result.stderr.strip()[:200]}")
+        else:
+            for line in result.stdout.splitlines():
+                if line.startswith("Location:"):
+                    loc = line.split(":", 1)[1].strip()
+                    p = Path(loc) / "qlib" / "scripts" / "dump_bin.py"
+                    print(f"  [find_dump_bin] pip location: {loc}")
+                    if p.exists():
+                        print(f"  [find_dump_bin] ✅ 找到 (via pip show): {p}")
+                        return p
+                    else:
+                        print(f"  [find_dump_bin] 路径存在但无 scripts/dump_bin.py (可能是 PyPI pyqlib 包)")
+    except Exception as e:
+        print(f"  [find_dump_bin] pip show 异常: {e}")
 
+    print(f"  [find_dump_bin] ❌ 未找到 dump_bin.py，将使用手动构建")
     return None
 
 # 20 个蓝筹币种（市值大、历史长、流动性好）
