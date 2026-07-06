@@ -3,16 +3,15 @@
 训练 LightGBM 模型
 
 用法:
-    python scripts/biance/train.py                            # 默认 binance-lgb-momtopk
-    python scripts/biance/train.py binance-lgb-momtopk        # Binance
-    python scripts/biance/train.py csi300-lgb-momtopk         # A 股
+    python -m orange_quant.train                            # 默认 binance-lgb-momtopk
+    python -m orange_quant.train binance-lgb-momtopk        # Binance
+    python -m orange_quant.train csi300-lgb-momtopk         # A 股
 """
 
 import sys
 import argparse
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from orange_quant.workflow.experiment import run_from_yaml
 

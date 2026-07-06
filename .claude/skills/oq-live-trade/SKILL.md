@@ -21,13 +21,13 @@ description: 本地实盘/模拟自动交易，支持分析和下单
 source .venv/bin/activate
 
 # DRY RUN 模式（只分析不下单，推荐先跑）
-python scripts/biance/execute.py --once --dry-run
+python -m orange_quant.server --once --dry-run
 
 # 实际下单（主网）
-python scripts/biance/execute.py --once
+python -m orange_quant.server --once
 
 # 使用 LightGBM 模型预测
-python scripts/biance/execute.py --once --model models/binance-lgb-momtopk.pkl
+python -m orange_quant.server --once --model models/binance-lgb-momtopk.pkl
 ```
 
 ## 当前持仓

@@ -25,8 +25,8 @@ argument-hint: "[config]"
 
 ```bash
 source .venv/bin/activate
-python scripts/biance/train.py binance-lgb-momtopk
-python scripts/biance/train.py csi300-lgb-momtopk
+python -m orange_quant.train binance-lgb-momtopk
+python -m orange_quant.train csi300-lgb-momtopk
 ```
 
 ### 深度学习实验（LSTM/GRU/Transformer）

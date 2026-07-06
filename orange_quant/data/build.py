@@ -7,9 +7,9 @@
 3. 转换为 qlib 二进制格式
 
 用法：
-    python scripts/biance/build_data.py          # 默认前50
-    python scripts/biance/build_data.py --top 100
-    python scripts/biance/build_data.py --force   # 强制全部重新下载
+    python -m orange_quant.data.build          # 默认前50
+    python -m orange_quant.data.build --top 100
+    python -m orange_quant.data.build --force   # 强制全部重新下载
 """
 
 import sys
@@ -22,7 +22,6 @@ from datetime import datetime, timezone
 import pandas as pd
 import requests
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 _BINANCE_API = "https://api.binance.com/api/v3"
 RAW_DIR = Path("data/binance_raw")

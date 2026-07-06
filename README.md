@@ -13,12 +13,13 @@ orange-quant/
 │   ├── csi300-lgb-momtopk.yaml
 │   └── binance-lgb-momtopk.yaml
 ├── scripts/                    # 工具脚本
-│   ├── biance/
-│   │   ├── build_data.py       # 构建 Binance 数据集
-│   │   ├── train.py             # 训练 LightGBM 模型
-│   │   └── execute.py          # 交易执行入口
 │   └── csi300/
 │       └── build_data.py       # 下载 A 股数据
+├── orange_quant/
+│   ├── data/
+│   │   └── build.py            # 构建 Binance 数据集
+│   ├── server.py               # 交易执行入口
+│   └── train.py                # 训练 LightGBM 模型
 ├── Dockerfile
 └── docker-compose.yml
 ```
@@ -43,7 +44,7 @@ python scripts/csi300/build_data.py
 python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/csi300-lgb-momtopk.yaml')"
 
 # Binance
-python scripts/biance/build_data.py --top 50
+python -m orange_quant.data.build --top 50
 python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/binance-lgb-momtopk.yaml')"
 ```
 
@@ -62,10 +63,10 @@ python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_
 source .venv/bin/activate
 
 # DRY RUN（只分析不下单）
-python scripts/biance/execute.py --once --dry-run --model models/binance-lgb-momtopk.pkl
+python -m orange_quant.server --once --dry-run --model models/binance-lgb-momtopk.pkl
 
 # 实盘下单
-python scripts/biance/execute.py --once --model models/binance-lgb-momtopk.pkl
+python -m orange_quant.server --once --model models/binance-lgb-momtopk.pkl
 
 # 查看持仓
 python -c "
@@ -88,7 +89,7 @@ BIANCE_SECRET_KEY=你的secret_key
 EOF
 
 # 下载数据 + 放入模型文件
-python scripts/biance/build_data.py --top 50
+python -m orange_quant.data.build --top 50
 mkdir -p models
 cp /path/to/binance-lgb-momtopk.pkl models/
 
