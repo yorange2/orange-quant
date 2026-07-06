@@ -49,7 +49,7 @@ class BinanceBroker:
 
         if paper:
             # Paper trading: 用公开 API 获取行情，本地模拟账户
-            self.exchange = ccxt.binance({
+            self.exchange = ccxt.binance({"type": "spot",
                 "enableRateLimit": True,
                 "options": {"defaultType": "spot"},
             })
@@ -58,7 +58,7 @@ class BinanceBroker:
             self._paper_trades = []
         else:
             if testnet:
-                self.exchange = ccxt.binance({
+                self.exchange = ccxt.binance({"type": "spot",
                     "apiKey": api_key,
                     "secret": secret_key,
                     "enableRateLimit": True,
@@ -72,7 +72,7 @@ class BinanceBroker:
                 })
                 self.exchange.set_sandbox_mode(True)
             else:
-                self.exchange = ccxt.binance({
+                self.exchange = ccxt.binance({"type": "spot",
                     "apiKey": api_key,
                     "secret": secret_key,
                     "enableRateLimit": True,
