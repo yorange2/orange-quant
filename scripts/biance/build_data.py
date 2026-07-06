@@ -112,7 +112,33 @@ def _rebuild_qlib():
     import numpy as np
     QLIB_DIR.mkdir(parents=True, exist_ok=True)
 
-    # dump_bin
+    # 日历和 instruments（无论用哪种方式构建都先生成）
+    coins = sorted([f.stem for f in RAW_DIR.glob("*.csv")])
+    all_dates = set()
+    for coin in coins:
+        df = pd.read_csv(RAW_DIR / f"{coin}.csv")
+        all_dates.update(df["date"].tolist())
+    sorted_dates = sorted(all_dates)
+
+    (QLIB_DIR / "calendars").mkdir(parents=True, exist_ok=True)
+    (QLIB_DIR / "calendars" / "day.txt").write_text("\n".join(sorted_dates))
+
+    (QLIB_DIR / "instruments").mkdir(parents=True, exist_ok=True)
+    inst_lines = []
+    for coin in coins:
+        df = pd.read_csv(RAW_DIR / f"{coin}.csv")
+        inst_lines.append(f"{coin}\t{df['date'].min()}\t{df['date'].max()}")
+    (QLIB_DIR / "instruments" / "all.txt").write_text("\n".join(inst_lines))
+
+    blue_lines = []
+    for coin in BLUECHIPS:
+        csv_file = RAW_DIR / f"{coin}.csv"
+        if csv_file.exists():
+            df = pd.read_csv(csv_file)
+            blue_lines.append(f"{coin}\t{df['date'].min()}\t{df['date'].max()}")
+    (QLIB_DIR / "instruments" / "bluechips.txt").write_text("\n".join(blue_lines))
+
+    # dump_bin（qlib 脚本，生成 features）
     dump_script = QLIB_REPO / "scripts" / "dump_bin.py"
     if dump_script.exists():
         result = subprocess.run(
@@ -125,40 +151,16 @@ def _rebuild_qlib():
         if result.returncode == 0:
             return
 
-    # 手动构建
+    # 手动构建 features（dump_bin 失败时的兜底）
+    import numpy as np
     features_dir = QLIB_DIR / "features"
-    all_dates = set()
     for csv_file in RAW_DIR.glob("*.csv"):
         coin = csv_file.stem
         df = pd.read_csv(csv_file).set_index("date").sort_index()
-        all_dates.update(df.index.tolist())
         coin_dir = features_dir / coin
         coin_dir.mkdir(parents=True, exist_ok=True)
         for field in ["open", "close", "high", "low", "volume", "factor"]:
             df[field].values.astype(np.float32).tofile(str(coin_dir / f"day.{field}.bin"))
-
-    sorted_dates = sorted(all_dates)
-    (QLIB_DIR / "calendars").mkdir(parents=True, exist_ok=True)
-    (QLIB_DIR / "calendars" / "day.txt").write_text("\n".join(sorted_dates))
-
-    (QLIB_DIR / "instruments").mkdir(parents=True, exist_ok=True)
-    coins = sorted([f.stem for f in RAW_DIR.glob("*.csv")])
-
-    # all.txt: 全部币种
-    inst_lines = []
-    for coin in coins:
-        df = pd.read_csv(RAW_DIR / f"{coin}.csv")
-        inst_lines.append(f"{coin}\t{df['date'].min()}\t{df['date'].max()}")
-    (QLIB_DIR / "instruments" / "all.txt").write_text("\n".join(inst_lines))
-
-    # bluechips.txt: 20 个蓝筹币种（只包含已下载的）
-    blue_lines = []
-    for coin in BLUECHIPS:
-        csv_file = RAW_DIR / f"{coin}.csv"
-        if csv_file.exists():
-            df = pd.read_csv(csv_file)
-            blue_lines.append(f"{coin}\t{df['date'].min()}\t{df['date'].max()}")
-    (QLIB_DIR / "instruments" / "bluechips.txt").write_text("\n".join(blue_lines))
 
 
 def main():
