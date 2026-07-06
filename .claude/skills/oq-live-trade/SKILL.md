@@ -21,13 +21,13 @@ description: 本地实盘/模拟自动交易，支持分析和下单
 source .venv/bin/activate
 
 # DRY RUN 模式（只分析不下单，推荐先跑）
-python -m orange_quant.server --once --dry-run
+python -m biance_lgb_momtopk.server --once --dry-run
 
 # 实际下单（主网）
-python -m orange_quant.server --once
+python -m biance_lgb_momtopk.server --once
 
 # 使用 LightGBM 模型预测
-python -m orange_quant.server --once --model models/binance-lgb-momtopk.pkl
+python -m biance_lgb_momtopk.server --once --model models/binance-lgb-momtopk.pkl
 ```
 
 ## 当前持仓
@@ -36,7 +36,7 @@ python -m orange_quant.server --once --model models/binance-lgb-momtopk.pkl
 source .venv/bin/activate
 python -c "
 from dotenv import load_dotenv; load_dotenv(override=True)
-from orange_quant.trading.broker import BinanceBroker
+from biance_lgb_momtopk.trading.broker import BinanceBroker
 broker = BinanceBroker(testnet=False, paper=False)
 balances = broker.get_balances()
 for a, amt in sorted(balances.items()):

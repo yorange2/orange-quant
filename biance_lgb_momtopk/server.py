@@ -4,10 +4,10 @@ Orange Quant 自动交易服务器
 
 在 Docker 中长期运行，每日定时调仓。
 用法：
-    python -m orange_quant.server                    # 默认每日 00:15 UTC 调仓
-    python -m orange_quant.server --hour 8 --minute 0  # 每日 08:00 UTC
-    python -m orange_quant.server --dry-run           # 只分析不下单
-    python -m orange_quant.server --once             # 执行一次后退出
+    python -m biance_lgb_momtopk.server                    # 默认每日 00:15 UTC 调仓
+    python -m biance_lgb_momtopk.server --hour 8 --minute 0  # 每日 08:00 UTC
+    python -m biance_lgb_momtopk.server --dry-run           # 只分析不下单
+    python -m biance_lgb_momtopk.server --once             # 执行一次后退出
 """
 
 import sys
@@ -22,8 +22,8 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
-from orange_quant.trading.broker import BinanceBroker
-from orange_quant.trading.runner import StrategyRunner
+from biance_lgb_momtopk.trading.broker import BinanceBroker
+from biance_lgb_momtopk.trading.runner import StrategyRunner
 
 # 日志配置
 logging.basicConfig(
@@ -57,11 +57,11 @@ def on_signal(signum, frame):
 def retrain_model(model_path: str):
     """增量更新数据 + 重新训练模型"""
     logger.info("📥 增量更新数据...")
-    from orange_quant.data import rebuild_data
+    from biance_lgb_momtopk.data import rebuild_data
     rebuild_data()
     config_name = Path(model_path).stem
     logger.info(f"🚀 重新训练: {config_name}")
-    from orange_quant.workflow.experiment import run_from_yaml
+    from biance_lgb_momtopk.workflow.experiment import run_from_yaml
     run_from_yaml(f"config/{config_name}.yaml")
     logger.info("✅ 模型已更新")
 

@@ -3,9 +3,9 @@
 训练 LightGBM 模型
 
 用法:
-    python -m orange_quant.train                            # 默认 binance-lgb-momtopk
-    python -m orange_quant.train binance-lgb-momtopk        # Binance
-    python -m orange_quant.train csi300-lgb-momtopk         # A 股
+    python -m biance_lgb_momtopk.train                            # 默认 binance-lgb-momtopk
+    python -m biance_lgb_momtopk.train binance-lgb-momtopk        # Binance
+    python -m biance_lgb_momtopk.train csi300-lgb-momtopk         # A 股
 """
 
 import sys
@@ -13,7 +13,7 @@ import argparse
 from pathlib import Path
 
 
-from orange_quant.workflow.experiment import run_from_yaml
+from biance_lgb_momtopk.workflow.experiment import run_from_yaml
 
 
 def main():

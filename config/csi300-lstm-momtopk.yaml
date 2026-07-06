@@ -2,7 +2,7 @@
 # Orange Quant 深度学习实验 — LSTM
 # =============================================================
 # 用法：
-#   python -c "from orange_quant.workflow.experiment import run_dl_from_yaml; run_dl_from_yaml('config/csi300-lstm-momtopk.yaml')"
+#   python -c "from biance_lgb_momtopk.workflow.experiment import run_dl_from_yaml; run_dl_from_yaml('config/csi300-lstm-momtopk.yaml')"
 # =============================================================
 
 # ── qlib 初始化 ──

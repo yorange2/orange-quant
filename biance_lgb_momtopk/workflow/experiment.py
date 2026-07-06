@@ -51,7 +51,7 @@ class QuantExperiment:
     量化实验管理器。
 
     一键运行完整实验流程，自动记录模型参数、预测信号、IC 分析、回测结果。
-    模型和策略均使用 orange_quant 自己的类（通过 YAML 配置驱动）。
+    模型和策略均使用 biance_lgb_momtopk 自己的类（通过 YAML 配置驱动）。
 
     使用方式：
 
@@ -175,11 +175,11 @@ class QuantExperiment:
         print("=" * 60 + "\n")
 
         # ── Step 1: 初始化 qlib ──
-        print(f"[orange_quant] 初始化 qlib, 数据路径: {self.provider_uri}")
+        print(f"[biance_lgb_momtopk] 初始化 qlib, 数据路径: {self.provider_uri}")
         qlib.init(provider_uri=self.provider_uri, region=self.region)
 
         # ── Step 2: 构建数据集 ──
-        print(f"[orange_quant] 加载数据: {self.instruments}")
+        print(f"[biance_lgb_momtopk] 加载数据: {self.instruments}")
         handler = Alpha158(
             instruments=self.instruments,
             start_time=self.train_start,
@@ -196,7 +196,7 @@ class QuantExperiment:
                 "test": (self.test_start, self.test_end),
             },
         )
-        print(f"[orange_quant] 数据集构建完成: train={self.train_start}~{self.train_end}, "
+        print(f"[biance_lgb_momtopk] 数据集构建完成: train={self.train_start}~{self.train_end}, "
               f"valid={self.valid_start}~{self.valid_end}, test={self.test_start}~{self.test_end}")
 
         # ── Step 3: 训练模型 ──
@@ -209,7 +209,7 @@ class QuantExperiment:
         if mlflow.active_run():
             mlflow.end_run()
 
-        with R.start(experiment_name="orange_quant_exp"):
+        with R.start(experiment_name="biance_lgb_momtopk_exp"):
             recorder = R.get_recorder()  # 立即保存 recorder 引用
             R.log_params(
                 instruments=self.instruments,
@@ -226,7 +226,7 @@ class QuantExperiment:
             sar = SigAnaRecord(recorder)
             sar.generate()
 
-            # 回测 — 使用 orange_quant 策略配置
+            # 回测 — 使用 biance_lgb_momtopk 策略配置
             port_analysis_config = {
                 "executor": {
                     "class": "SimulatorExecutor",
@@ -276,7 +276,7 @@ def run_from_yaml(config_path: str = "config/csi300-lgb-momtopk.yaml") -> dict:
     从 YAML 配置运行实验的便捷函数。
 
     可直接在 notebook 或脚本中调用：
-        from orange_quant.workflow.experiment import run_from_yaml
+        from biance_lgb_momtopk.workflow.experiment import run_from_yaml
         results = run_from_yaml("config/csi300-lgb-momtopk.yaml")
 
     训练完成后自动将模型导出到 models/{config_name}.pkl。
@@ -306,7 +306,7 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
         SFM, TCN, KRNN, GATs, HIST, IGMTF, TCTS 等
 
     使用方式：
-        from orange_quant.workflow.experiment import run_dl_from_yaml
+        from biance_lgb_momtopk.workflow.experiment import run_dl_from_yaml
         results = run_dl_from_yaml("config/csi300-lstm-momtopk.yaml")
 
     Parameters
@@ -347,11 +347,11 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
     print("=" * 60 + "\n")
 
     # ── Step 1: 初始化 qlib ──
-    print(f"[orange_quant] 初始化 qlib, 数据路径: {provider_uri}")
+    print(f"[biance_lgb_momtopk] 初始化 qlib, 数据路径: {provider_uri}")
     qlib.init(provider_uri=provider_uri, region=region)
 
     # ── Step 2: 构建时序数据集 (TSDatasetH) ──
-    print(f"[orange_quant] 加载数据: {instruments}, step_len={step_len}")
+    print(f"[biance_lgb_momtopk] 加载数据: {instruments}, step_len={step_len}")
 
     # DL 模型使用 TSDatasetH + 特殊预处理
     from qlib.contrib.data.handler import Alpha158
@@ -395,7 +395,7 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
         },
         step_len=step_len,
     )
-    print(f"[orange_quant] TSDatasetH 构建完成, step_len={step_len}")
+    print(f"[biance_lgb_momtopk] TSDatasetH 构建完成, step_len={step_len}")
 
     # ── Step 3: 训练模型 ──
     module_path = KNOWN_DL_MODULES.get(model_name)
@@ -408,9 +408,9 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
     model_cls = getattr(module, model_name)
     model = model_cls(**model_kwargs)
 
-    print(f"[orange_quant] 开始训练 {model_name} 模型...")
+    print(f"[biance_lgb_momtopk] 开始训练 {model_name} 模型...")
     model.fit(dataset)
-    print(f"[orange_quant] {model_name} 训练完成！")
+    print(f"[biance_lgb_momtopk] {model_name} 训练完成！")
 
     predictions = model.predict(dataset, segment="test")
 
@@ -418,7 +418,7 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
     if mlflow.active_run():
         mlflow.end_run()
 
-    with R.start(experiment_name=f"orange_quant_dl_{model_name.lower()}"):
+    with R.start(experiment_name=f"biance_lgb_momtopk_dl_{model_name.lower()}"):
         recorder = R.get_recorder()
         R.log_params(
             model=model_name,

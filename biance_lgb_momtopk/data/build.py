@@ -7,9 +7,9 @@
 3. 转换为 qlib 二进制格式
 
 用法：
-    python -m orange_quant.data.build          # 默认前50
-    python -m orange_quant.data.build --top 100
-    python -m orange_quant.data.build --force   # 强制全部重新下载
+    python -m biance_lgb_momtopk.data.build          # 默认前50
+    python -m biance_lgb_momtopk.data.build --top 100
+    python -m biance_lgb_momtopk.data.build --force   # 强制全部重新下载
 """
 
 import sys

@@ -26,7 +26,7 @@ python scripts/csi300/build_data.py
 
 ```bash
 source .venv/bin/activate
-python -m orange_quant.data.build --top 50
+python -m biance_lgb_momtopk.data.build --top 50
 ```
 
 数据存放: `data/qlib_data/binance/`（qlib 格式）、`data/binance_raw/`（原始 CSV）

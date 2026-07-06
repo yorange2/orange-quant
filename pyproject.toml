@@ -33,4 +33,4 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["orange_quant*"]
+include = ["biance_lgb_momtopk*"]

@@ -6,7 +6,7 @@
 
 ```
 orange-quant/
-├── orange_quant/               # 核心包
+├── biance_lgb_momtopk/               # 核心包
 │   ├── trading/                # 交易层：Binance 自动交易
 │   └── workflow/               # 实验管理：YAML 配置驱动
 ├── config/                     # 实验配置文件
@@ -15,7 +15,7 @@ orange-quant/
 ├── scripts/                    # 工具脚本
 │   └── csi300/
 │       └── build_data.py       # 下载 A 股数据
-├── orange_quant/
+├── biance_lgb_momtopk/
 │   ├── data/
 │   │   └── build.py            # 构建 Binance 数据集
 │   ├── server.py               # 交易执行入口
@@ -41,11 +41,11 @@ pip install lightgbm pandas numpy pyyaml ccxt python-dotenv
 ```bash
 # A 股
 python scripts/csi300/build_data.py
-python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/csi300-lgb-momtopk.yaml')"
+python -c "from biance_lgb_momtopk.workflow.experiment import run_from_yaml; run_from_yaml('config/csi300-lgb-momtopk.yaml')"
 
 # Binance
-python -m orange_quant.data.build --top 50
-python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/binance-lgb-momtopk.yaml')"
+python -m biance_lgb_momtopk.data.build --top 50
+python -c "from biance_lgb_momtopk.workflow.experiment import run_from_yaml; run_from_yaml('config/binance-lgb-momtopk.yaml')"
 ```
 
 ## 实验结果
@@ -63,15 +63,15 @@ python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_
 source .venv/bin/activate
 
 # DRY RUN（只分析不下单）
-python -m orange_quant.server --once --dry-run --model models/binance-lgb-momtopk.pkl
+python -m biance_lgb_momtopk.server --once --dry-run --model models/binance-lgb-momtopk.pkl
 
 # 实盘下单
-python -m orange_quant.server --once --model models/binance-lgb-momtopk.pkl
+python -m biance_lgb_momtopk.server --once --model models/binance-lgb-momtopk.pkl
 
 # 查看持仓
 python -c "
 from dotenv import load_dotenv; load_dotenv(override=True)
-from orange_quant.trading.broker import BinanceBroker
+from biance_lgb_momtopk.trading.broker import BinanceBroker
 broker = BinanceBroker(testnet=False, paper=False)
 for a, amt in sorted(broker.get_balances().items()):
     if amt > 0.0001:
@@ -89,7 +89,7 @@ BIANCE_SECRET_KEY=你的secret_key
 EOF
 
 # 下载数据 + 放入模型文件
-python -m orange_quant.data.build --top 50
+python -m biance_lgb_momtopk.data.build --top 50
 mkdir -p models
 cp /path/to/binance-lgb-momtopk.pkl models/
 

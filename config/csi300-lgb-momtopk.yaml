@@ -2,7 +2,7 @@
 # Orange Quant 工作流配置文件
 # =============================================================
 # 用法：
-#   python -c "from orange_quant.workflow.experiment import run_from_yaml; run_from_yaml('config/csi300-lgb-momtopk.yaml')"
+#   python -c "from biance_lgb_momtopk.workflow.experiment import run_from_yaml; run_from_yaml('config/csi300-lgb-momtopk.yaml')"
 # =============================================================
 
 # ── qlib 初始化 ──
@@ -31,7 +31,7 @@ test:
     start: "2017-01-01"
     end: "2020-08-01"
 
-# ── 模型配置（orange_quant LightGBM 训练器） ──
+# ── 模型配置（biance_lgb_momtopk LightGBM 训练器） ──
 model:
     kwargs:
         loss: mse
@@ -44,7 +44,7 @@ model:
         bagging_freq: 5
         verbose_eval: 50
 
-# ── 策略配置（orange_quant 动量TopK策略） ──
+# ── 策略配置（biance_lgb_momtopk 动量TopK策略） ──
 strategy:
     class: TopkDropoutStrategy
     module_path: qlib.contrib.strategy.signal_strategy

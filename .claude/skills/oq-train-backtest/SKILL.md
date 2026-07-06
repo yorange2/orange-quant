@@ -25,8 +25,8 @@ argument-hint: "[config]"
 
 ```bash
 source .venv/bin/activate
-python -m orange_quant.train binance-lgb-momtopk
-python -m orange_quant.train csi300-lgb-momtopk
+python -m biance_lgb_momtopk.train binance-lgb-momtopk
+python -m biance_lgb_momtopk.train csi300-lgb-momtopk
 ```
 
 ### 深度学习实验（LSTM/GRU/Transformer）
@@ -34,7 +34,7 @@ python -m orange_quant.train csi300-lgb-momtopk
 ```bash
 source .venv/bin/activate
 python -c "
-from orange_quant.workflow.experiment import run_dl_from_yaml
+from biance_lgb_momtopk.workflow.experiment import run_dl_from_yaml
 results = run_dl_from_yaml('config/csi300-lstm-momtopk.yaml')
 "
 ```
