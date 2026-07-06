@@ -99,6 +99,7 @@ scp -r models data/qlib_data/binance user@服务器:~/orange-quant/
 # 启动
 docker compose --profile live up -d  --build    # 实盘
 docker compose --profile dry-run up -d  --build # 观察（不下单）
+docker compose --profile once up --build        # 手动执行一次（测试用）
 docker logs -f orange-quant             # 日志
 docker compose down                     # 停止
 ```
