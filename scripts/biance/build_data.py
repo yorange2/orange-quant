@@ -27,7 +27,43 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 _BINANCE_API = "https://api.binance.com/api/v3"
 RAW_DIR = Path("data/binance_raw")
 QLIB_DIR = Path("data/qlib_data/binance")
-QLIB_REPO = Path("/Users/yuanchengcheng/Documents/GitHub/qlib")
+
+
+def _find_dump_bin() -> Path | None:
+    """动态查找 qlib 的 dump_bin.py 脚本路径"""
+    import importlib
+    # 方式一：从已安装的 qlib 包中查找
+    try:
+        import qlib
+        qlib_path = Path(qlib.__file__).resolve().parent.parent
+        candidate = qlib_path / "scripts" / "dump_bin.py"
+        if candidate.exists():
+            return candidate
+    except (ImportError, AttributeError):
+        pass
+
+    # 方式二：常见安装位置
+    for site in sys.path:
+        p = Path(site) / "qlib" / "scripts" / "dump_bin.py"
+        if p.exists():
+            return p
+
+    # 方式三：pip show 查找
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "show", "qlib"],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in result.stdout.splitlines():
+            if line.startswith("Location:"):
+                loc = line.split(":", 1)[1].strip()
+                p = Path(loc) / "qlib" / "scripts" / "dump_bin.py"
+                if p.exists():
+                    return p
+    except Exception:
+        pass
+
+    return None
 
 # 20 个蓝筹币种（市值大、历史长、流动性好）
 BLUECHIPS = [
@@ -139,8 +175,10 @@ def _rebuild_qlib():
     (QLIB_DIR / "instruments" / "bluechips.txt").write_text("\n".join(blue_lines))
 
     # dump_bin（qlib 脚本，生成 features）
-    dump_script = QLIB_REPO / "scripts" / "dump_bin.py"
-    if dump_script.exists():
+    dump_script = _find_dump_bin()
+    dump_bin_ok = False
+    if dump_script:
+        print(f"  使用 dump_bin: {dump_script}")
         result = subprocess.run(
             [sys.executable, str(dump_script), "dump_all",
              "--data_path", str(RAW_DIR), "--qlib_dir", str(QLIB_DIR),
@@ -149,22 +187,50 @@ def _rebuild_qlib():
             capture_output=True, text=True, timeout=300,
         )
         if result.returncode == 0:
-            return
+            print("  dump_bin 完成")
+            dump_bin_ok = True
+        else:
+            print(f"  dump_bin 失败 (exit={result.returncode}), 使用手动构建")
+            if result.stderr:
+                print(f"  stderr: {result.stderr[:500]}")
+    else:
+        print("  未找到 dump_bin.py, 使用手动构建")
 
-    # 手动构建 features（dump_bin 失败时的兜底）
-    # qlib 二进制格式: {field}.{freq}.bin, 文件头4字节为 start_index, 后续为 float32 值
-    import numpy as np
+    if not dump_bin_ok:
+        # 手动构建 features（dump_bin 不可用时的兜底）
+        # qlib 二进制格式: {field}.{freq}.bin, 文件头4字节为 start_index, 后续为 float32 值
+        features_dir = QLIB_DIR / "features"
+        # 构建日期 → 日历索引映射
+        date_to_idx = {d: i for i, d in enumerate(sorted_dates)}
+        print(f"  手动构建 features (日历共 {len(sorted_dates)} 天)...")
+        for csv_file in sorted(RAW_DIR.glob("*.csv")):
+            coin = csv_file.stem
+            df = pd.read_csv(csv_file).set_index("date").sort_index()
+            coin_dir = features_dir / coin
+            coin_dir.mkdir(parents=True, exist_ok=True)
+            # 计算该币种第一条日期在日历中的索引（start_index）
+            first_date = df.index[0]
+            start_idx = date_to_idx.get(first_date, 0)
+            for field in ["open", "close", "high", "low", "volume", "factor"]:
+                values = df[field].values.astype(np.float32)
+                data = np.hstack([start_idx, values]).astype("<f")
+                data.tofile(str(coin_dir / f"{field}.day.bin"))
+
+    # VWAP 代理：Binance 无 VWAP 数据，用 close 替代（Alpha158 需要此字段）
+    # 无论 dump_bin 是否成功，都需要补充此字段
+    print("  生成 VWAP 代理字段 (vwap=close)...")
     features_dir = QLIB_DIR / "features"
-    for csv_file in RAW_DIR.glob("*.csv"):
-        coin = csv_file.stem
-        df = pd.read_csv(csv_file).set_index("date").sort_index()
-        coin_dir = features_dir / coin
-        coin_dir.mkdir(parents=True, exist_ok=True)
-        for field in ["open", "close", "high", "low", "volume", "factor"]:
-            values = df[field].values.astype(np.float32)
-            # qlib expects [start_index (float32)] + [values...]
-            data = np.hstack([0, values]).astype("<f")
-            data.tofile(str(coin_dir / f"{field}.day.bin"))
+    if features_dir.exists():
+        existing_coins = [d.name for d in features_dir.iterdir() if d.is_dir()]
+        for coin in existing_coins:
+            close_bin = features_dir / coin / "close.day.bin"
+            vwap_bin = features_dir / coin / "vwap.day.bin"
+            if close_bin.exists() and not vwap_bin.exists():
+                data = np.fromfile(close_bin, dtype="<f")
+                data.tofile(str(vwap_bin))
+        print(f"  VWAP 代理字段已为 {len(existing_coins)} 个币种生成")
+    else:
+        print("  ⚠ features 目录不存在，跳过 VWAP 生成")
 
 
 def main():
@@ -172,6 +238,7 @@ def main():
     parser.add_argument("--top", type=int, default=50)
     parser.add_argument("--start", type=str, default="2020-01-01")
     parser.add_argument("--force", action="store_true", help="强制全量重新下载")
+    parser.add_argument("--rebuild-qlib", action="store_true", help="强制重建 qlib 二进制（即使无新数据）")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -247,9 +314,14 @@ def main():
 
     print(f"\n  总计 {total} 条日线（本次新增 {new_total} 条）")
 
-    # Step 2+3: 重建 qlib
-    if new_total > 0:
-        print("\n[Step 2/3] 重建 qlib 二进制...")
+    # Step 2+3: 重建 qlib（数据有更新 / 强制重建 / 强制下载）
+    if new_total > 0 or args.force or args.rebuild_qlib:
+        if new_total > 0:
+            print("\n[Step 2/3] 重建 qlib 二进制...")
+        elif args.rebuild_qlib:
+            print("\n[Step 2/3] 强制重建 qlib 二进制 (--rebuild-qlib)...")
+        else:
+            print("\n[Step 2/3] 强制重建 qlib 二进制 (--force)...")
         _rebuild_qlib()
         coins = sorted([f.stem for f in RAW_DIR.glob("*.csv")])
         dates = sorted(pd.read_csv(RAW_DIR / f"{coins[0]}.csv")["date"].tolist())

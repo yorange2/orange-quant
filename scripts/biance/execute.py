@@ -60,8 +60,9 @@ def retrain_model(model_path: str):
     import subprocess
     logger.info("📥 增量更新数据...")
     project_root = Path(__file__).resolve().parent.parent.parent
+    # --rebuild-qlib 确保 qlib 二进制数据被重建（修复旧格式/错位数据）
     subprocess.run(
-        [sys.executable, "scripts/biance/build_data.py"],
+        [sys.executable, "scripts/biance/build_data.py", "--rebuild-qlib"],
         check=True, cwd=project_root,
     )
     config_name = Path(model_path).stem
