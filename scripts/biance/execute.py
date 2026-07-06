@@ -57,14 +57,9 @@ def on_signal(signum, frame):
 
 def retrain_model(model_path: str):
     """增量更新数据 + 重新训练模型"""
-    import subprocess
     logger.info("📥 增量更新数据...")
-    project_root = Path(__file__).resolve().parent.parent.parent
-    # --rebuild-qlib 确保 qlib 二进制数据被重建（修复旧格式/错位数据）
-    subprocess.run(
-        [sys.executable, "scripts/biance/build_data.py", "--rebuild-qlib"],
-        check=True, cwd=project_root,
-    )
+    from scripts.biance.build_data import rebuild_data
+    rebuild_data()
     config_name = Path(model_path).stem
     logger.info(f"🚀 重新训练: {config_name}")
     from orange_quant.workflow.experiment import run_from_yaml

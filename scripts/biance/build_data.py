@@ -345,5 +345,91 @@ def main():
         print("\n✅ 数据已是最新，无需重建")
 
 
+def rebuild_data(top: int = 50, start: str = "2020-01-01", force_download: bool = False):
+    """增量下载数据并重建 qlib 二进制（供 execute.py 直接调用）
+
+    Parameters
+    ----------
+    top : int
+        Binance 成交量前 N 的 USDT 交易对。
+    start : str
+        数据起始日期。
+    force_download : bool
+        是否强制全量重新下载 CSV。
+    """
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    end_ms = int(time.time() * 1000)
+    start_ms = _date_to_ms(start)
+
+    # Step 0: 获取币种列表
+    pairs = get_top_symbols(top)
+    print(f"\n[Step 0] Binance 成交量前 {top} USDT 现货:")
+    for i, (sym, base) in enumerate(pairs):
+        print(f"  {i+1:3d}. {sym:15s} → {base}")
+
+    # Step 1: 增量下载
+    print(f"\n[Step 1/3] 下载日线 ({start} ~ {today_str})...")
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
+    total, new_total = 0, 0
+
+    for sym, base in pairs:
+        csv_file = RAW_DIR / f"{base}.csv"
+
+        if csv_file.exists() and not force_download:
+            existing = pd.read_csv(csv_file)
+            last_date = existing["date"].iloc[-1]
+            last_ms = _date_to_ms(last_date) + 86400000
+
+            if last_ms >= end_ms - 86400000:
+                print(f"  {base:10s} 已是最新 ({len(existing)} 天, 截止 {last_date})，跳过")
+                total += len(existing)
+                continue
+
+            print(f"  {base:10s} ({sym}) 更新 {last_date} → {today_str} ...",
+                  end=" ", flush=True)
+            candles = fetch_daily(sym, last_ms, end_ms)
+            if not candles:
+                print(f"⚠ 无新数据")
+                total += len(existing)
+                continue
+
+            new_csv = candles_to_csv(candles, base)
+            new_df = pd.read_csv(pd.io.common.StringIO(new_csv))
+            combined = pd.concat([existing, new_df]).drop_duplicates(
+                subset="date", keep="last"
+            ).sort_values("date")
+            combined.to_csv(csv_file, index=False)
+            added = len(combined) - len(existing)
+            print(f"✅ +{added} 天 (共 {len(combined)} 天)")
+            total += len(combined)
+            new_total += added
+            time.sleep(_REQUEST_DELAY)
+        else:
+            if force_download and csv_file.exists():
+                print(f"  {base:10s} 强制重新下载...", end=" ", flush=True)
+            else:
+                print(f"  {base:10s} ({sym}) 首次下载...", end=" ", flush=True)
+            candles = fetch_daily(sym, start_ms, end_ms)
+            if not candles:
+                print("⚠ 无数据")
+                continue
+
+            csv_file.write_text(candles_to_csv(candles, base))
+            print(f"✅ {len(candles)} 天")
+            total += len(candles)
+            new_total += len(candles)
+            time.sleep(_REQUEST_DELAY)
+
+    print(f"\n  总计 {total} 条日线（本次新增 {new_total} 条）")
+
+    # Step 2+3: 总是重建 qlib
+    print("\n[Step 2/3] 重建 qlib 二进制...")
+    _rebuild_qlib()
+    coins = sorted([f.stem for f in RAW_DIR.glob("*.csv")])
+    dates = sorted(pd.read_csv(RAW_DIR / f"{coins[0]}.csv")["date"].tolist())
+    print(f"\n✅ 完成！{QLIB_DIR}")
+    print(f"   币种: {len(coins)}, 时间: {dates[0]} ~ {dates[-1]}")
+
+
 if __name__ == "__main__":
     main()
