@@ -2,7 +2,7 @@
 # Orange Quant Binance 现货实验 — 42 币种
 # =============================================================
 # 数据来源: Binance 公开 API (2020-01 ~ 2026-06)
-# 币种: 成交量前50 USDT现货 (动态)
+# 币种: 20 蓝筹 (BTC, ETH, SOL 等)
 # 成本: 现货 taker 0.1% ×2 (Binance 标准费率)
 # =============================================================
 
@@ -10,7 +10,7 @@ qlib_init:
     provider_uri: "data/qlib_data/binance"
 
 data:
-    instruments: all
+    instruments: bluechips
 
 train:
     start: "2020-01-01"

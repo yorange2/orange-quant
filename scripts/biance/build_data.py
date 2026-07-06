@@ -29,6 +29,13 @@ RAW_DIR = Path("data/binance_raw")
 QLIB_DIR = Path("data/qlib_data/binance")
 QLIB_REPO = Path("/Users/yuanchengcheng/Documents/GitHub/qlib")
 
+# 20 个蓝筹币种（市值大、历史长、流动性好）
+BLUECHIPS = [
+    "BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "AVAX",
+    "LINK", "DOT", "LTC", "UNI", "AAVE", "NEAR", "TRX", "FET",
+    "INJ", "XLM", "BCH", "HBAR",
+]
+
 _SKIP = {
     "USDCUSDT", "USDTUSDT", "TUSDUSDT", "BUSDUSDT", "DAIUSDT",
     "PAXUSDT", "USD1USDT", "FDUSDUSDT", "RLUSDUSDT", "EURUSDT",
@@ -136,11 +143,22 @@ def _rebuild_qlib():
 
     (QLIB_DIR / "instruments").mkdir(parents=True, exist_ok=True)
     coins = sorted([f.stem for f in RAW_DIR.glob("*.csv")])
+
+    # all.txt: 全部币种
     inst_lines = []
     for coin in coins:
         df = pd.read_csv(RAW_DIR / f"{coin}.csv")
         inst_lines.append(f"{coin}\t{df['date'].min()}\t{df['date'].max()}")
     (QLIB_DIR / "instruments" / "all.txt").write_text("\n".join(inst_lines))
+
+    # bluechips.txt: 20 个蓝筹币种（只包含已下载的）
+    blue_lines = []
+    for coin in BLUECHIPS:
+        csv_file = RAW_DIR / f"{coin}.csv"
+        if csv_file.exists():
+            df = pd.read_csv(csv_file)
+            blue_lines.append(f"{coin}\t{df['date'].min()}\t{df['date'].max()}")
+    (QLIB_DIR / "instruments" / "bluechips.txt").write_text("\n".join(blue_lines))
 
 
 def main():
