@@ -152,6 +152,11 @@ def fetch_daily(symbol: str, start_ms: int, end_ms: int) -> list:
             break
         batch_start = last_time + 86400000
         time.sleep(_REQUEST_DELAY)
+
+    # 过滤掉当天未收盘的蜡烛（close_time > 当前时间）
+    now_ms = int(time.time() * 1000)
+    all_candles = [c for c in all_candles if c[6] <= now_ms]
+
     return all_candles
 
 
