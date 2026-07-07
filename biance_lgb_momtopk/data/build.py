@@ -78,13 +78,6 @@ def _find_dump_bin() -> Path | None:
     print(f"  [find_dump_bin] ❌ 未找到 dump_bin.py，将使用手动构建")
     return None
 
-# 20 个蓝筹币种（市值大、历史长、流动性好）
-BLUECHIPS = [
-    "BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "AVAX",
-    "LINK", "DOT", "LTC", "UNI", "AAVE", "NEAR", "TRX", "FET",
-    "INJ", "XLM", "BCH", "HBAR",
-]
-
 _SKIP = {
     "USDCUSDT", "USDTUSDT", "TUSDUSDT", "BUSDUSDT", "DAIUSDT",
     "PAXUSDT", "USD1USDT", "FDUSDUSDT", "RLUSDUSDT", "EURUSDT",
@@ -179,14 +172,6 @@ def _rebuild_qlib():
         inst_lines.append(f"{coin}\t{df['date'].min()}\t{df['date'].max()}")
     (QLIB_DIR / "instruments" / "all.txt").write_text("\n".join(inst_lines))
 
-    blue_lines = []
-    for coin in BLUECHIPS:
-        csv_file = RAW_DIR / f"{coin}.csv"
-        if csv_file.exists():
-            df = pd.read_csv(csv_file)
-            blue_lines.append(f"{coin}\t{df['date'].min()}\t{df['date'].max()}")
-    (QLIB_DIR / "instruments" / "bluechips.txt").write_text("\n".join(blue_lines))
-
     # dump_bin（qlib 脚本，生成 features）
     dump_script = _find_dump_bin()
     dump_bin_ok = False
@@ -244,11 +229,6 @@ def _rebuild_qlib():
         print(f"  VWAP 代理字段已为 {len(existing_coins)} 个币种生成")
     else:
         print("  ⚠ features 目录不存在，跳过 VWAP 生成")
-
-
-def _bluechip_pairs():
-    """将 BLUECHIPS 列表转为 (symbol, base) 格式"""
-    return [(f"{c}USDT", c) for c in BLUECHIPS]
 
 
 def main():
@@ -355,7 +335,7 @@ def rebuild_data(top: int = 50, start: str = "2020-01-01", force_download: bool 
     Parameters
     ----------
     top : int
-        Binance 成交量前 N 的 USDT 交易对。0 表示使用 BLUECHIPS 蓝筹列表。
+        Binance 成交量前 N 的 USDT 交易对。
     start : str
         数据起始日期。
     force_download : bool
@@ -365,12 +345,9 @@ def rebuild_data(top: int = 50, start: str = "2020-01-01", force_download: bool 
     end_ms = int(time.time() * 1000)
     start_ms = _date_to_ms(start)
 
-    use_bluechips = top <= 0
-
     # Step 0: 获取币种列表
-    pairs = _bluechip_pairs() if use_bluechips else get_top_symbols(top)
-    label = f"BLUECHIPS ({len(pairs)}个)" if use_bluechips else f"成交量前 {top}"
-    print(f"\n[Step 0] 币种列表 ({label}):")
+    pairs = get_top_symbols(top)
+    print(f"\n[Step 0] Binance 成交量前 {top} USDT 现货:")
     for i, (sym, base) in enumerate(pairs):
         print(f"  {i+1:3d}. {sym:15s} → {base}")
 
