@@ -309,6 +309,13 @@ def main():
                 total += len(existing)
                 continue
 
+            # 退市币：上次数据距今超过30天，API 不再返回新数据
+            days_stale = (end_ms - last_ms) // 86400000
+            if days_stale > 30:
+                print(f"  {base:10s} 已退市 ({len(existing)} 天, 截止 {last_date})，跳过")
+                total += len(existing)
+                continue
+
             # 增量获取
             print(f"  {base:10s} ({sym}) 更新 {last_date} → {today_str} ...",
                   end=" ", flush=True)
@@ -406,6 +413,13 @@ def rebuild_data(top: int = 50, start: str = "2020-01-01", force_download: bool 
 
             if last_ms >= end_ms - 86400000:
                 print(f"  {base:10s} 已是最新 ({len(existing)} 天, 截止 {last_date})，跳过")
+                total += len(existing)
+                continue
+
+            # 退市币：上次数据距今超过30天，API 不再返回新数据
+            days_stale = (end_ms - last_ms) // 86400000
+            if days_stale > 30:
+                print(f"  {base:10s} 已退市 ({len(existing)} 天, 截止 {last_date})，跳过")
                 total += len(existing)
                 continue
 
