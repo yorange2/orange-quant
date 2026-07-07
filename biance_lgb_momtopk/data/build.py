@@ -253,18 +253,14 @@ def _bluechip_pairs():
 
 def main():
     parser = argparse.ArgumentParser(description="构建 Binance 现货日线数据集")
-    parser.add_argument("--top", type=int, default=0,
-                        help="成交量前N（默认0=使用BLUECHIPS蓝筹列表）")
+    parser.add_argument("--top", type=int, default=50)
     parser.add_argument("--start", type=str, default="2020-01-01")
     parser.add_argument("--force", action="store_true", help="强制全量重新下载")
     parser.add_argument("--rebuild-qlib", action="store_true", help="强制重建 qlib 二进制（即使无新数据）")
     args = parser.parse_args()
 
-    use_bluechips = args.top <= 0
-
     print("=" * 60)
-    label = f"BLUECHIPS ({len(BLUECHIPS)}个)" if use_bluechips else f"Top {args.top}"
-    print(f"📥 构建 Binance 现货日线数据集 ({label})")
+    print(f"📥 构建 Binance 现货日线数据集 (Top {args.top})")
     print("=" * 60)
 
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -272,8 +268,8 @@ def main():
     start_ms = _date_to_ms(args.start)
 
     # Step 0: 获取币种列表
-    pairs = _bluechip_pairs() if use_bluechips else get_top_symbols(args.top)
-    print(f"\n[Step 0] 币种列表 ({len(pairs)} 个):")
+    pairs = get_top_symbols(args.top)
+    print(f"\n[Step 0] Binance 成交量前 {args.top} USDT 现货:")
     for i, (sym, base) in enumerate(pairs):
         print(f"  {i+1:3d}. {sym:15s} → {base}")
 
@@ -353,7 +349,7 @@ def main():
         print("\n✅ 数据已是最新，无需重建")
 
 
-def rebuild_data(top: int = 0, start: str = "2020-01-01", force_download: bool = False):
+def rebuild_data(top: int = 50, start: str = "2020-01-01", force_download: bool = False):
     """增量下载数据并重建 qlib 二进制（供 execute.py 直接调用）
 
     Parameters
