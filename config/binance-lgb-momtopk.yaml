@@ -10,7 +10,7 @@ qlib_init:
     provider_uri: "data/qlib_data/binance"
 
 data:
-    instruments: bluechips
+    instruments: all
 
 train:
     start: "2020-01-01"
