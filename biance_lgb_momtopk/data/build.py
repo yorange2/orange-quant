@@ -12,9 +12,7 @@
     python -m biance_lgb_momtopk.data.build --force   # 强制全部重新下载
 """
 
-import sys
 import time
-import subprocess
 import argparse
 from pathlib import Path
 from datetime import datetime, timezone
@@ -28,55 +26,6 @@ RAW_DIR = Path("data/binance_raw")
 QLIB_DIR = Path("data/qlib_data/binance")
 
 
-def _find_dump_bin() -> Path | None:
-    """动态查找 qlib 的 dump_bin.py 脚本路径"""
-    # 方式一：从已安装的 qlib 包中查找
-    try:
-        import qlib
-        qlib_root = Path(qlib.__file__).resolve().parent.parent
-        candidate = qlib_root / "scripts" / "dump_bin.py"
-        print(f"  [find_dump_bin] qlib 包路径: {qlib_root}")
-        if candidate.exists():
-            print(f"  [find_dump_bin] ✅ 找到 (via qlib.__file__): {candidate}")
-            return candidate
-        else:
-            print(f"  [find_dump_bin] 未找到 scripts/dump_bin.py 在 qlib 包中")
-    except (ImportError, AttributeError) as e:
-        print(f"  [find_dump_bin] qlib 导入失败: {e}")
-
-    # 方式二：遍历 sys.path
-    print(f"  [find_dump_bin] 遍历 sys.path ({len(sys.path)} 个路径)...")
-    for site in sys.path:
-        p = Path(site) / "qlib" / "scripts" / "dump_bin.py"
-        if p.exists():
-            print(f"  [find_dump_bin] ✅ 找到 (via sys.path): {p}")
-            return p
-
-    # 方式三：pip show 查找
-    print(f"  [find_dump_bin] 尝试 pip show qlib...")
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "show", "qlib"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode != 0:
-            print(f"  [find_dump_bin] pip show 失败: {result.stderr.strip()[:200]}")
-        else:
-            for line in result.stdout.splitlines():
-                if line.startswith("Location:"):
-                    loc = line.split(":", 1)[1].strip()
-                    p = Path(loc) / "qlib" / "scripts" / "dump_bin.py"
-                    print(f"  [find_dump_bin] pip location: {loc}")
-                    if p.exists():
-                        print(f"  [find_dump_bin] ✅ 找到 (via pip show): {p}")
-                        return p
-                    else:
-                        print(f"  [find_dump_bin] 路径存在但无 scripts/dump_bin.py (可能是 PyPI pyqlib 包)")
-    except Exception as e:
-        print(f"  [find_dump_bin] pip show 异常: {e}")
-
-    print(f"  [find_dump_bin] ❌ 未找到 dump_bin.py，将使用手动构建")
-    return None
 
 _SKIP = {
     "USDCUSDT", "USDTUSDT", "TUSDUSDT", "BUSDUSDT", "DAIUSDT",
@@ -192,47 +141,22 @@ def _rebuild_qlib():
         inst_lines.append(f"{coin}\t{df['date'].min()}\t{df['date'].max()}")
     (QLIB_DIR / "instruments" / "all.txt").write_text("\n".join(inst_lines))
 
-    # dump_bin（qlib 脚本，生成 features）
-    dump_script = _find_dump_bin()
-    dump_bin_ok = False
-    if dump_script:
-        print(f"  使用 dump_bin: {dump_script}")
-        result = subprocess.run(
-            [sys.executable, str(dump_script), "dump_all",
-             "--data_path", str(RAW_DIR), "--qlib_dir", str(QLIB_DIR),
-             "--include_fields", "open,close,high,low,volume,factor",
-             "--date_field_name", "date", "--freq", "day"],
-            capture_output=True, text=True, timeout=300,
-        )
-        if result.returncode == 0:
-            print("  dump_bin 完成")
-            dump_bin_ok = True
-        else:
-            print(f"  dump_bin 失败 (exit={result.returncode}), 使用手动构建")
-            if result.stderr:
-                print(f"  stderr: {result.stderr[:500]}")
-    else:
-        print("  未找到 dump_bin.py, 使用手动构建")
-
-    if not dump_bin_ok:
-        # 手动构建 features（dump_bin 不可用时的兜底）
-        # qlib 二进制格式: {field}.{freq}.bin, 文件头4字节为 start_index, 后续为 float32 值
-        features_dir = QLIB_DIR / "features"
-        # 构建日期 → 日历索引映射
-        date_to_idx = {d: i for i, d in enumerate(sorted_dates)}
-        print(f"  手动构建 features (日历共 {len(sorted_dates)} 天)...")
-        for csv_file in sorted(RAW_DIR.glob("*.csv")):
-            coin = csv_file.stem
-            df = pd.read_csv(csv_file).set_index("date").sort_index()
-            coin_dir = features_dir / coin
-            coin_dir.mkdir(parents=True, exist_ok=True)
-            # 计算该币种第一条日期在日历中的索引（start_index）
-            first_date = df.index[0]
-            start_idx = date_to_idx.get(first_date, 0)
-            for field in ["open", "close", "high", "low", "volume", "factor"]:
-                values = df[field].values.astype(np.float32)
-                data = np.hstack([start_idx, values]).astype("<f")
-                data.tofile(str(coin_dir / f"{field}.day.bin"))
+    # 手动构建 features
+    # qlib 二进制格式: {field}.{freq}.bin, 文件头4字节为 start_index, 后续为 float32 值
+    features_dir = QLIB_DIR / "features"
+    date_to_idx = {d: i for i, d in enumerate(sorted_dates)}
+    print(f"  构建 features (日历共 {len(sorted_dates)} 天)...")
+    for csv_file in sorted(RAW_DIR.glob("*.csv")):
+        coin = csv_file.stem
+        df = pd.read_csv(csv_file).set_index("date").sort_index()
+        coin_dir = features_dir / coin
+        coin_dir.mkdir(parents=True, exist_ok=True)
+        first_date = df.index[0]
+        start_idx = date_to_idx.get(first_date, 0)
+        for field in ["open", "close", "high", "low", "volume", "factor"]:
+            values = df[field].values.astype(np.float32)
+            data = np.hstack([start_idx, values]).astype("<f")
+            data.tofile(str(coin_dir / f"{field}.day.bin"))
 
     # VWAP 代理：Binance 无 VWAP 数据，用 close 替代（Alpha158 需要此字段）
     # 无论 dump_bin 是否成功，都需要补充此字段
