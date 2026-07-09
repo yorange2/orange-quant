@@ -105,26 +105,25 @@ def candles_to_csv(candles: list, base: str) -> str:
 
 
 def _rebuild_qlib():
-    """从 raw CSV 重建 qlib 二进制"""
+    """从 raw CSV 重建 qlib 二进制，返回 (coins, sorted_dates)"""
     import numpy as np
     QLIB_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 日历和 instruments（无论用哪种方式构建都先生成）
     coins = sorted([f.stem for f in RAW_DIR.glob("*.csv")])
     all_dates = set()
+    inst_lines = []
+
     for coin in coins:
         df = pd.read_csv(RAW_DIR / f"{coin}.csv")
         all_dates.update(df["date"].tolist())
+        inst_lines.append(f"{coin}\t{df['date'].min()}\t{df['date'].max()}")
+
     sorted_dates = sorted(all_dates)
 
     (QLIB_DIR / "calendars").mkdir(parents=True, exist_ok=True)
     (QLIB_DIR / "calendars" / "day.txt").write_text("\n".join(sorted_dates))
 
     (QLIB_DIR / "instruments").mkdir(parents=True, exist_ok=True)
-    inst_lines = []
-    for coin in coins:
-        df = pd.read_csv(RAW_DIR / f"{coin}.csv")
-        inst_lines.append(f"{coin}\t{df['date'].min()}\t{df['date'].max()}")
     (QLIB_DIR / "instruments" / "all.txt").write_text("\n".join(inst_lines))
 
     # 手动构建 features
@@ -132,33 +131,28 @@ def _rebuild_qlib():
     features_dir = QLIB_DIR / "features"
     date_to_idx = {d: i for i, d in enumerate(sorted_dates)}
     print(f"  构建 features (日历共 {len(sorted_dates)} 天)...")
-    for csv_file in sorted(RAW_DIR.glob("*.csv")):
-        coin = csv_file.stem
-        df = pd.read_csv(csv_file).set_index("date").sort_index()
+    for coin in coins:
+        df = pd.read_csv(RAW_DIR / f"{coin}.csv").set_index("date").sort_index()
         coin_dir = features_dir / coin
         coin_dir.mkdir(parents=True, exist_ok=True)
-        first_date = df.index[0]
-        start_idx = date_to_idx.get(first_date, 0)
+        start_idx = date_to_idx.get(df.index[0], 0)
         for field in ["open", "close", "high", "low", "volume", "factor"]:
             values = df[field].values.astype(np.float32)
             data = np.hstack([start_idx, values]).astype("<f")
             data.tofile(str(coin_dir / f"{field}.day.bin"))
 
     # VWAP 代理：Binance 无 VWAP 数据，用 close 替代（Alpha158 需要此字段）
-    # 无论 dump_bin 是否成功，都需要补充此字段
     print("  生成 VWAP 代理字段 (vwap=close)...")
-    features_dir = QLIB_DIR / "features"
     if features_dir.exists():
-        existing_coins = [d.name for d in features_dir.iterdir() if d.is_dir()]
-        for coin in existing_coins:
+        for coin in coins:
             close_bin = features_dir / coin / "close.day.bin"
             vwap_bin = features_dir / coin / "vwap.day.bin"
             if close_bin.exists() and not vwap_bin.exists():
                 data = np.fromfile(close_bin, dtype="<f")
                 data.tofile(str(vwap_bin))
-        print(f"  VWAP 代理字段已为 {len(existing_coins)} 个币种生成")
-    else:
-        print("  ⚠ features 目录不存在，跳过 VWAP 生成")
+        print(f"  VWAP 代理字段已为 {len(coins)} 个币种生成")
+
+    return coins, sorted_dates
 
 
 def main():
@@ -172,85 +166,7 @@ def main():
     print(f"📥 构建 Binance 现货日线数据集 (Top {args.top})")
     print("=" * 60)
 
-    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    end_ms = int(time.time() * 1000)
-    start_ms = _date_to_ms(args.start)
-
-    # Step 0: 获取币种列表
-    pairs = get_top_symbols(args.top)
-    print(f"\n[Step 0] Binance 成交量前 {args.top} USDT 现货:")
-    for i, (sym, base) in enumerate(pairs):
-        print(f"  {i+1:3d}. {sym:15s} → {base}")
-
-    # Step 1: 增量下载
-    print(f"\n[Step 1/3] 下载日线 ({args.start} ~ {today_str})...")
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
-    total, new_total = 0, 0
-
-    for sym, base in pairs:
-        csv_file = RAW_DIR / f"{base}.csv"
-
-        if csv_file.exists() and not args.force:
-            existing = pd.read_csv(csv_file)
-            last_date = existing["date"].iloc[-1]
-            last_ms = _date_to_ms(last_date) + 86400000  # 从次日开始
-
-            if last_ms >= end_ms - 86400000:
-                # 数据已是最新（距现在不到1天），跳过
-                print(f"  {base:10s} 已是最新 ({len(existing)} 天, 截止 {last_date})，跳过")
-                total += len(existing)
-                continue
-
-            # 增量获取
-            print(f"  {base:10s} ({sym}) 更新 {last_date} → {today_str} ...",
-                  end=" ", flush=True)
-            candles = fetch_daily(sym, last_ms, end_ms)
-            if not candles:
-                print(f"⚠ 无新数据")
-                total += len(existing)
-                continue
-
-            # 合并去重
-            new_csv = candles_to_csv(candles, base)
-            new_df = pd.read_csv(pd.io.common.StringIO(new_csv))
-            combined = pd.concat([existing, new_df]).drop_duplicates(
-                subset="date", keep="last"
-            ).sort_values("date")
-            combined.to_csv(csv_file, index=False)
-            added = len(combined) - len(existing)
-            print(f"✅ +{added} 天 (共 {len(combined)} 天)")
-            total += len(combined)
-            new_total += added
-            time.sleep(_REQUEST_DELAY)
-        else:
-            # 全新下载
-            if args.force and csv_file.exists():
-                print(f"  {base:10s} 强制重新下载...", end=" ", flush=True)
-            else:
-                print(f"  {base:10s} ({sym}) 首次下载...", end=" ", flush=True)
-            candles = fetch_daily(sym, start_ms, end_ms)
-            if not candles:
-                print("⚠ 无数据")
-                continue
-
-            csv_file.write_text(candles_to_csv(candles, base))
-            print(f"✅ {len(candles)} 天")
-            total += len(candles)
-            new_total += len(candles)
-            time.sleep(_REQUEST_DELAY)
-
-    print(f"\n  总计 {total} 条日线（本次新增 {new_total} 条）")
-
-    # Step 2+3: 重建 qlib
-    print("\n[Step 2/3] 重建 qlib 二进制...")
-    _rebuild_qlib()
-    coins = sorted([f.stem for f in RAW_DIR.glob("*.csv")])
-    if not coins:
-        print("\n⚠ 无数据文件，跳过重建")
-        return
-    dates = sorted(pd.read_csv(RAW_DIR / f"{coins[0]}.csv")["date"].tolist())
-    print(f"\n✅ 完成！{QLIB_DIR}")
-    print(f"   币种: {len(coins)}, 时间: {dates[0]} ~ {dates[-1]}")
+    rebuild_data(top=args.top, start=args.start, force_download=args.force)
 
 
 def rebuild_data(top: int = 50, start: str = "2020-01-01", force_download: bool = False):
@@ -332,12 +248,10 @@ def rebuild_data(top: int = 50, start: str = "2020-01-01", force_download: bool 
 
     # Step 2+3: 总是重建 qlib
     print("\n[Step 2/3] 重建 qlib 二进制...")
-    _rebuild_qlib()
-    coins = sorted([f.stem for f in RAW_DIR.glob("*.csv")])
+    coins, dates = _rebuild_qlib()
     if not coins:
         print("\n⚠ 无数据文件，跳过重建")
         return
-    dates = sorted(pd.read_csv(RAW_DIR / f"{coins[0]}.csv")["date"].tolist())
     print(f"\n✅ 完成！{QLIB_DIR}")
     print(f"   币种: {len(coins)}, 时间: {dates[0]} ~ {dates[-1]}")
 
