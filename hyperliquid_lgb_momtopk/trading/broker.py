@@ -1,12 +1,12 @@
 """
 Hyperliquid 交易所接口
 
-通过 REST API 连接 Hyperliquid 去中心化永续合约交易所，
+通过 REST API 连接 Hyperliquid 去中心化现货交易所，
 提供账户查询、行情获取、订单执行等功能。
 
 Hyperliquid API:
     - 公开数据: POST https://api.hyperliquid.xyz/info
-    - 交易: 需要使用官方 SDK (hyperliquid-python-sdk)
+    - 现货交易: 需要使用官方 SDK (hyperliquid-python-sdk)
 """
 
 import os
@@ -24,12 +24,12 @@ _HL_INFO = "https://api.hyperliquid.xyz/info"
 
 class HyperliquidBroker:
     """
-    Hyperliquid 实盘交易所封装。
+    Hyperliquid 现货实盘交易所封装。
 
     使用方式：
 
         broker = HyperliquidBroker()
-        broker.market_buy("BTC", 100)  # 买入100 USDT的BTC永续合约
+        broker.market_buy("PURR", 100)  # 买入100 USDC的PURR
     """
 
     def __init__(self):
@@ -37,13 +37,12 @@ class HyperliquidBroker:
         self.private_key = os.getenv("HYPERLIQUID_PRIVATE_KEY", "")
         self.address = os.getenv("HYPERLIQUID_ADDRESS", "")
 
-        # 使用官方 SDK
         try:
             from hyperliquid.info import Info
             from hyperliquid.exchange import Exchange
             self.info = Info(base_url=_HL_INFO)
             self.exchange = Exchange(
-                wallet=None,  # 需要配置 wallet
+                wallet=None,
                 base_url="https://api.hyperliquid.xyz",
                 private_key=self.private_key,
             )
@@ -56,8 +55,8 @@ class HyperliquidBroker:
     def _verify_connection(self):
         """验证连接"""
         try:
-            meta = self._api_post({"type": "meta"})
-            print(f"[broker] ✅ Hyperliquid MAINNET 连接成功 (永续合约: {len(meta['universe'])} 个)")
+            meta = self._api_post({"type": "spotMeta"})
+            print(f"[broker] ✅ Hyperliquid Spot MAINNET 连接成功 (现货代币: {len(meta['tokens'])} 个)")
         except Exception as e:
             print(f"[broker] ❌ 连接失败: {e}")
             raise
@@ -69,18 +68,27 @@ class HyperliquidBroker:
         return resp.json()
 
     def get_balances(self) -> Dict[str, float]:
-        """获取账户余额"""
+        """获取账户余额（现货余额 + USDC）"""
         if not self.address:
             return {"USDC": 0.0}
         try:
-            state = self._api_post({"type": "clearinghouseState", "user": self.address})
-            return {"USDC": float(state.get("marginSummary", {}).get("accountValue", 0))}
+            # 获取现货余额
+            balances = self._api_post({"type": "spotClearinghouseState", "user": self.address})
+            result = {}
+            for b in balances.get("balances", []):
+                coin = b.get("coin", "")
+                amount = float(b.get("total", 0))
+                if amount > 0:
+                    result[coin] = amount
+            # 也查询 USDC 余额
+            result["USDC"] = float(balances.get("withdrawable", 0))
+            return result
         except Exception as e:
             print(f"[broker] ❌ 获取余额失败: {e}")
             return {"USDC": 0.0}
 
     def get_usdt_balance(self) -> float:
-        """获取 USDC 余额（Hyperliquid 使用 USDC 作为保证金）"""
+        """获取 USDC 余额"""
         return self.get_balances().get("USDC", 0.0)
 
     def get_current_prices(self, coins: List[str]) -> Dict[str, float]:
@@ -123,14 +131,22 @@ class HyperliquidBroker:
         return df
 
     def market_buy(self, coin: str, amount_usdc: float) -> Optional[dict]:
-        """市价买入"""
+        """市价买入现货（IOC 限价单，滑点 1%）"""
         try:
             if not self.exchange:
                 print(f"[broker] ❌ SDK 未安装，无法下单")
                 return None
             price = self._get_mid(coin)
+            if price <= 0:
+                return None
             sz = amount_usdc / price
-            order = self.exchange.market_open(coin, True, sz)
+            # SIOC = 市价立即成交或取消，limitPx 设为高于市价 1% 确保成交
+            order = self.exchange.order(
+                coin, True, sz,
+                {"limit": {"tif": "Ioc"}},
+                None,
+                round(price * 1.01, 6),
+            )
             print(f"[broker] ✅ 买入 {coin} sz={sz:.4f} @ ~${price:.2f} = ~${amount_usdc:.2f}")
             return order
         except Exception as e:
@@ -138,13 +154,21 @@ class HyperliquidBroker:
             return None
 
     def market_sell(self, coin: str, amount: float) -> Optional[dict]:
-        """市价卖出（平仓）"""
+        """市价卖出现货（IOC 限价单，滑点 1%）"""
         try:
             if not self.exchange:
                 print(f"[broker] ❌ SDK 未安装，无法下单")
                 return None
-            order = self.exchange.market_close(coin, amount)
-            print(f"[broker] ✅ 卖出 {coin} sz={amount:.4f}")
+            price = self._get_mid(coin)
+            if price <= 0:
+                return None
+            order = self.exchange.order(
+                coin, False, amount,
+                {"limit": {"tif": "Ioc"}},
+                None,
+                round(price * 0.99, 6),
+            )
+            print(f"[broker] ✅ 卖出 {coin} sz={amount:.4f} @ ~${price:.2f}")
             return order
         except Exception as e:
             print(f"[broker] ❌ 卖出 {coin} 失败: {e}")
@@ -198,9 +222,9 @@ class PaperBroker:
     def _verify_connection(self):
         """验证连接"""
         try:
-            meta = self._api_post({"type": "meta"})
+            meta = self._api_post({"type": "spotMeta"})
             print(f"[broker] ✅ Hyperliquid Paper Trading 模式 "
-                  f"(初始 ${self._balance.get('USDC', 0):,.0f}, {len(meta['universe'])} 个永续合约)")
+                  f"(初始 ${self._balance.get('USDC', 0):,.0f}, {len(meta['tokens'])} 个现货代币)")
         except Exception as e:
             print(f"[broker] ❌ 连接失败: {e}")
             raise

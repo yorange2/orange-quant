@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
 """
-构建 Hyperliquid 永续合约日线 qlib 数据集
+构建 Hyperliquid 现货日线 qlib 数据集
 
-1. 获取 Hyperliquid 成交量前 N 的永续合约
+1. 获取 Hyperliquid 现货成交量前 N 的代币
 2. 增量下载日线（已有数据只补最新部分）
 3. 转换为 qlib 二进制格式
-
-Hyperliquid API:
-    POST https://api.hyperliquid.xyz/info
-    - {"type": "meta"}          → 所有永续合约元数据
-    - {"type": "candleSnapshot", "req": {"coin": "BTC", "interval": "1d", ...}}
 
 用法：
     python -m hyperliquid_lgb_momtopk.data.build          # 默认前50
@@ -56,26 +51,27 @@ def _ms_to_date(ms: int) -> str:
 
 
 def get_top_symbols(n: int = 50) -> list:
-    """获取 Hyperliquid 成交量前 N 的永续合约"""
-    resp = requests.post(_HL_API, json={"type": "meta"}, timeout=10)
+    """获取 Hyperliquid 成交量前 N 的现货代币"""
+    resp = requests.post(_HL_API, json={"type": "spotMetaAndAssetCtxs"}, timeout=10)
     resp.raise_for_status()
-    meta = resp.json()
+    data = resp.json()
+    tokens = data[0]["tokens"]
+    ctxs = data[1]
 
-    perps = []
-    for p in meta["universe"]:
-        name = p["name"]
-        vol = float(p.get("dayNtlVlm", 0))
-        perps.append((name, vol))
+    # 按日名义成交量排序
+    ranked = []
+    for i, t in enumerate(tokens):
+        name = t["name"]
+        if name == "USDC":
+            continue  # 跳过稳定币
+        vol = float(ctxs[i].get("dayNtlVlm", 0)) if i < len(ctxs) else 0
+        ranked.append((name, vol))
 
-    perps.sort(key=lambda x: x[1], reverse=True)
+    ranked.sort(key=lambda x: x[1], reverse=True)
 
-    # 排除测试网代币
-    skip_prefixes = ("TEST", "TOKEN")
     result = []
-    for name, vol in perps:
-        if any(name.startswith(p) for p in skip_prefixes):
-            continue
-        result.append((name, name))  # (symbol, base) — Hyperliquid 币名即 symbol
+    for name, vol in ranked:
+        result.append((name, name))
         if len(result) >= n:
             break
     return result
@@ -188,7 +184,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 60)
-    print(f"📥 构建 Hyperliquid 永续合约日线数据集 (Top {args.top})")
+    print(f"📥 构建 Hyperliquid 现货日线数据集 (Top {args.top})")
     print("=" * 60)
 
     rebuild_data(top=args.top, start=args.start, force_download=args.force)
@@ -202,7 +198,7 @@ def rebuild_data(top: int = 50, start: str = "2020-01-01", force_download: bool 
 
     # Step 0: 获取币种列表
     pairs = get_top_symbols(top)
-    print(f"\n[Step 0] Hyperliquid 永续合约 Top {top}:")
+    print(f"\n[Step 0] Hyperliquid 现货 Top {top}:")
     for i, (sym, coin) in enumerate(pairs):
         print(f"  {i+1:3d}. {coin:15s}")
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Orange Quant Hyperliquid 自动交易服务器
+Orange Quant Hyperliquid 现货自动交易服务器
 
 在 Docker 中长期运行，每日定时调仓。
 用法：

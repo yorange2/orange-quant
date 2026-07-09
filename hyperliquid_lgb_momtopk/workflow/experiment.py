@@ -86,7 +86,7 @@ class QuantExperiment:
     def run(self) -> dict:
         """执行完整实验流程"""
         print("\n" + "=" * 60)
-        print("🚀 Orange Quant Hyperliquid 实验开始")
+        print("🚀 Orange Quant Hyperliquid 现货实验开始")
         print("=" * 60 + "\n")
 
         # Step 1: 初始化 qlib
