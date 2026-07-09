@@ -13,9 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装依赖（pyqlib 从 PyPI）
-COPY requirements-server.txt .
-RUN pip install --no-cache-dir -r requirements-server.txt
+# 安装依赖
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制项目代码
 COPY biance_lgb_momtopk/ ./biance_lgb_momtopk/

@@ -33,20 +33,6 @@ _SKIP = {
     "XAUTUSDT", "PAXGUSDT",
 }
 
-# 已退市但曾有一定成交量的 USDT 交易对（修正幸存者偏差）
-# Binance API 仍提供这些币种的历史 K 线数据
-DELISTED = [
-    # 2022 退市（LUNA/FTX 崩盘相关）
-    "LUNA", "FTT", "ANC", "MIR",
-    # 2022 其他退市
-    "MITH", "TRIBE", "REP", "BTCST", "DNT", "NBS",
-    "BTG", "TCT", "SUSD",
-    # 2021及以前退市
-    "BTS", "PERL", "WTC", "GTO", "VIB", "XZC",
-    # 2023-2024 退市
-    "BOND", "DOCK", "MDX", "POLS", "KP3R", "OOKI", "UNFI",
-]
-
 _REQUEST_DELAY = 0.3
 
 
@@ -175,22 +161,12 @@ def _rebuild_qlib():
         print("  ⚠ features 目录不存在，跳过 VWAP 生成")
 
 
-def _delisted_pairs(existing_bases: set) -> list:
-    """返回退市币的 (symbol, base) 对，排除已在 existing_bases 中的"""
-    result = []
-    for base in DELISTED:
-        if base not in existing_bases:
-            result.append((f"{base}USDT", base))
-    return result
-
-
 def main():
     parser = argparse.ArgumentParser(description="构建 Binance 现货日线数据集")
     parser.add_argument("--top", type=int, default=50)
     parser.add_argument("--start", type=str, default="2020-01-01")
     parser.add_argument("--force", action="store_true", help="强制全量重新下载")
     parser.add_argument("--rebuild-qlib", action="store_true", help="强制重建 qlib 二进制（即使无新数据）")
-    parser.add_argument("--no-delisted", action="store_true", help="不下载已退市币种")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -203,14 +179,7 @@ def main():
 
     # Step 0: 获取币种列表
     pairs = get_top_symbols(args.top)
-    if not args.no_delisted:
-        existing_bases = {b for _, b in pairs}
-        delisted = _delisted_pairs(existing_bases)
-        pairs.extend(delisted)
-        tag = f"+{len(DELISTED)}退市"
-    else:
-        tag = ""
-    print(f"\n[Step 0] Binance 成交量前 {args.top} USDT 现货{tag}:")
+    print(f"\n[Step 0] Binance 成交量前 {args.top} USDT 现货:")
     for i, (sym, base) in enumerate(pairs):
         print(f"  {i+1:3d}. {sym:15s} → {base}")
 
@@ -230,13 +199,6 @@ def main():
             if last_ms >= end_ms - 86400000:
                 # 数据已是最新（距现在不到1天），跳过
                 print(f"  {base:10s} 已是最新 ({len(existing)} 天, 截止 {last_date})，跳过")
-                total += len(existing)
-                continue
-
-            # 退市币：上次数据距今超过30天，API 不再返回新数据
-            days_stale = (end_ms - last_ms) // 86400000
-            if days_stale > 30:
-                print(f"  {base:10s} 已退市 ({len(existing)} 天, 截止 {last_date})，跳过")
                 total += len(existing)
                 continue
 
@@ -315,10 +277,7 @@ def rebuild_data(top: int = 50, start: str = "2020-01-01", force_download: bool 
 
     # Step 0: 获取币种列表
     pairs = get_top_symbols(top)
-    existing_bases = {b for _, b in pairs}
-    delisted = _delisted_pairs(existing_bases)
-    pairs.extend(delisted)
-    print(f"\n[Step 0] Binance 成交量前 {top} USDT 现货+{len(DELISTED)}退市:")
+    print(f"\n[Step 0] Binance 成交量前 {top} USDT 现货:")
     for i, (sym, base) in enumerate(pairs):
         print(f"  {i+1:3d}. {sym:15s} → {base}")
 
@@ -337,13 +296,6 @@ def rebuild_data(top: int = 50, start: str = "2020-01-01", force_download: bool 
 
             if last_ms >= end_ms - 86400000:
                 print(f"  {base:10s} 已是最新 ({len(existing)} 天, 截止 {last_date})，跳过")
-                total += len(existing)
-                continue
-
-            # 退市币：上次数据距今超过30天，API 不再返回新数据
-            days_stale = (end_ms - last_ms) // 86400000
-            if days_stale > 30:
-                print(f"  {base:10s} 已退市 ({len(existing)} 天, 截止 {last_date})，跳过")
                 total += len(existing)
                 continue
 

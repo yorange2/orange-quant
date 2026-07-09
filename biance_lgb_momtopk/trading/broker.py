@@ -31,12 +31,10 @@ class BinanceBroker:
         broker.market_buy("BTC/USDT", 100)  # 买入100 USDT的BTC
     """
 
-    def __init__(self, testnet: bool = True, paper: bool = True):
+    def __init__(self, paper: bool = True):
         """
         Parameters
         ----------
-        testnet : bool
-            True 使用 Binance 测试网，False 使用实盘。
         paper : bool
             True = paper trading 模式（仅公开 API，不下单）。
             需要真实交易时设为 False。
@@ -44,7 +42,6 @@ class BinanceBroker:
         api_key = os.getenv("BINANCE_API_KEY", "")
         secret_key = os.getenv("BIANCE_SECRET_KEY", "")
 
-        self.testnet = testnet
         self.paper = paper
 
         if paper:
@@ -57,21 +54,6 @@ class BinanceBroker:
             self._paper_balance["USDT"] = 100000.0  # 初始 10万 USDT
             self._paper_trades = []
         else:
-            if testnet:
-                self.exchange = ccxt.binance({"type": "spot",
-                    "apiKey": api_key,
-                    "secret": secret_key,
-                    "enableRateLimit": True,
-                    "urls": {
-                        "api": {
-                            "public": "https://testnet.binance.vision/api/v3",
-                            "private": "https://testnet.binance.vision/api/v3",
-                        },
-                    },
-                    "options": {"defaultType": "spot"},
-                })
-                self.exchange.set_sandbox_mode(True)
-            else:
                 self.exchange = ccxt.binance({"type": "spot",
                     "apiKey": api_key,
                     "secret": secret_key,

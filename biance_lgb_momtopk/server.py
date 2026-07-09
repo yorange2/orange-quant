@@ -114,7 +114,6 @@ def main():
     parser.add_argument("--minute", type=int, default=15, help="每日调仓时间 (分钟)")
     parser.add_argument("--dry-run", action="store_true", help="只分析不下单")
     parser.add_argument("--once", action="store_true", help="执行一次后退出")
-    parser.add_argument("--testnet", action="store_true", help="使用测试网")
     parser.add_argument("--topk", type=int, default=DEFAULT_TOP_K, help="持仓数量")
     parser.add_argument("--lookback", type=int, default=DEFAULT_LOOKBACK, help="回看天数")
     parser.add_argument("--min-trade", type=float, default=DEFAULT_MIN_TRADE, help="最小交易金额 USDT")
@@ -127,17 +126,16 @@ def main():
     signal.signal(signal.SIGTERM, on_signal)
 
     mode = "DRY RUN" if args.dry_run else "LIVE"
-    env = "TESTNET" if args.testnet else "MAINNET"
     logger.info("=" * 50)
     logger.info(f"🤖 Orange Quant 交易服务器启动")
-    logger.info(f"   环境: {env} | 模式: {mode}")
+    logger.info(f"   环境: MAINNET | 模式: {mode}")
     logger.info(f"   币种: {len(COINS)} | TopK: {args.topk}")
     logger.info(f"   调仓时间: 每日 {args.hour:02d}:{args.minute:02d} UTC")
     logger.info("=" * 50)
 
     # 连接交易所
     try:
-        broker = BinanceBroker(testnet=args.testnet, paper=args.dry_run)
+        broker = BinanceBroker(paper=args.dry_run)
         if not args.dry_run:
             balances = broker.get_balances()
             usdt = balances.get("USDT", 0)
