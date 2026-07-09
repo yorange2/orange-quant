@@ -166,7 +166,6 @@ def main():
     parser.add_argument("--top", type=int, default=50)
     parser.add_argument("--start", type=str, default="2020-01-01")
     parser.add_argument("--force", action="store_true", help="强制全量重新下载")
-    parser.add_argument("--rebuild-qlib", action="store_true", help="强制重建 qlib 二进制（即使无新数据）")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -242,21 +241,13 @@ def main():
 
     print(f"\n  总计 {total} 条日线（本次新增 {new_total} 条）")
 
-    # Step 2+3: 重建 qlib（数据有更新 / 强制重建 / 强制下载）
-    if new_total > 0 or args.force or args.rebuild_qlib:
-        if new_total > 0:
-            print("\n[Step 2/3] 重建 qlib 二进制...")
-        elif args.rebuild_qlib:
-            print("\n[Step 2/3] 强制重建 qlib 二进制 (--rebuild-qlib)...")
-        else:
-            print("\n[Step 2/3] 强制重建 qlib 二进制 (--force)...")
-        _rebuild_qlib()
-        coins = sorted([f.stem for f in RAW_DIR.glob("*.csv")])
-        dates = sorted(pd.read_csv(RAW_DIR / f"{coins[0]}.csv")["date"].tolist())
-        print(f"\n✅ 完成！{QLIB_DIR}")
-        print(f"   币种: {len(coins)}, 时间: {dates[0]} ~ {dates[-1]}")
-    else:
-        print("\n✅ 数据已是最新，无需重建")
+    # Step 2+3: 重建 qlib
+    print("\n[Step 2/3] 重建 qlib 二进制...")
+    _rebuild_qlib()
+    coins = sorted([f.stem for f in RAW_DIR.glob("*.csv")])
+    dates = sorted(pd.read_csv(RAW_DIR / f"{coins[0]}.csv")["date"].tolist())
+    print(f"\n✅ 完成！{QLIB_DIR}")
+    print(f"   币种: {len(coins)}, 时间: {dates[0]} ~ {dates[-1]}")
 
 
 def rebuild_data(top: int = 50, start: str = "2020-01-01", force_download: bool = False):
