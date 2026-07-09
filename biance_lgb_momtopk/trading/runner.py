@@ -7,13 +7,13 @@
 
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 from datetime import datetime, timedelta
 
 import pandas as pd
 import numpy as np
 
-from .broker import BinanceBroker
+from .broker import BinanceBroker, PaperBroker
 
 
 class StrategyRunner:
@@ -34,7 +34,7 @@ class StrategyRunner:
 
     def __init__(
         self,
-        broker: BinanceBroker,
+        broker: Union[BinanceBroker, PaperBroker],
         coins: List[str],
         topk: int = 5,
         lookback_days: int = 160,
@@ -46,7 +46,7 @@ class StrategyRunner:
         """
         Parameters
         ----------
-        broker : BinanceBroker
+        broker : BinanceBroker or PaperBroker
         coins : list[str]
             交易币种（不含 USDT 后缀）。
         topk : int

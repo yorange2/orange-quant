@@ -22,7 +22,8 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
-from biance_lgb_momtopk.trading.broker import BinanceBroker
+from biance_lgb_momtopk.data import load_coins
+from biance_lgb_momtopk.trading.broker import BinanceBroker, PaperBroker
 from biance_lgb_momtopk.trading.runner import StrategyRunner
 
 # 日志配置
@@ -32,13 +33,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("orange-quant")
-
-# 交易币种
-COINS = [
-    "BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX",
-    "LINK", "DOT", "LTC", "UNI", "NEAR", "AAVE", "FIL", "INJ",
-    "TRX", "FET", "XLM", "ZEC",
-]
 
 # 默认调仓参数
 DEFAULT_TOP_K = 5
@@ -66,12 +60,12 @@ def retrain_model(model_path: str):
     logger.info("✅ 模型已更新")
 
 
-def run_rebalance(broker, dry_run, topk, lookback, min_trade, model_path=None):
+def run_rebalance(broker, coins, dry_run, topk, lookback, min_trade, model_path=None):
     """执行一次调仓"""
     try:
         runner = StrategyRunner(
             broker=broker,
-            coins=COINS,
+            coins=coins,
             topk=topk,
             lookback_days=lookback,
             min_trade_usdt=min_trade,
@@ -125,18 +119,27 @@ def main():
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
 
+    # 加载交易币种（从 qlib instruments，回退到内置列表）
+    coins = load_coins()
+    if not coins:
+        coins = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX",
+                 "LINK", "DOT", "LTC", "UNI", "NEAR", "AAVE", "FIL", "INJ",
+                 "TRX", "FET", "XLM", "ZEC"]
+
     mode = "DRY RUN" if args.dry_run else "LIVE"
     logger.info("=" * 50)
     logger.info(f"🤖 Orange Quant 交易服务器启动")
     logger.info(f"   环境: MAINNET | 模式: {mode}")
-    logger.info(f"   币种: {len(COINS)} | TopK: {args.topk}")
+    logger.info(f"   币种: {len(coins)} | TopK: {args.topk}")
     logger.info(f"   调仓时间: 每日 {args.hour:02d}:{args.minute:02d} UTC")
     logger.info("=" * 50)
 
     # 连接交易所
     try:
-        broker = BinanceBroker(paper=args.dry_run)
-        if not args.dry_run:
+        if args.dry_run:
+            broker = PaperBroker(coins=coins)
+        else:
+            broker = BinanceBroker()
             balances = broker.get_balances()
             usdt = balances.get("USDT", 0)
             logger.info(f"💰 当前 USDT: ${usdt:,.2f}")
@@ -149,7 +152,7 @@ def main():
     if args.once:
         if args.retrain:
             retrain_model(args.model)
-        run_rebalance(broker, args.dry_run, args.topk, args.lookback, args.min_trade, args.model)
+        run_rebalance(broker, coins, args.dry_run, args.topk, args.lookback, args.min_trade, args.model)
         return
 
     # ── 持续运行 ──
@@ -173,7 +176,7 @@ def main():
 
         if args.retrain:
             retrain_model(args.model)
-        run_rebalance(broker, args.dry_run, args.topk, args.lookback, args.min_trade, args.model)
+        run_rebalance(broker, coins, args.dry_run, args.topk, args.lookback, args.min_trade, args.model)
 
     logger.info("👋 服务器已安全退出")
 

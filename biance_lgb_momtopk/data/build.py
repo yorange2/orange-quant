@@ -26,6 +26,21 @@ RAW_DIR = Path("data/binance_raw")
 QLIB_DIR = Path("data/qlib_data/binance")
 
 
+def load_coins() -> list:
+    """从 qlib instruments 文件读取活跃币种列表"""
+    inst_file = QLIB_DIR / "instruments" / "all.txt"
+    if not inst_file.exists():
+        # 回退：从 raw CSV 目录读取
+        if RAW_DIR.exists():
+            return sorted([f.stem for f in RAW_DIR.glob("*.csv")])
+        return []
+    coins = []
+    for line in inst_file.read_text().strip().splitlines():
+        if "\t" in line:
+            coins.append(line.split("\t")[0])
+    return coins
+
+
 
 _SKIP = {
     "USDCUSDT", "USDTUSDT", "TUSDUSDT", "BUSDUSDT", "DAIUSDT",
