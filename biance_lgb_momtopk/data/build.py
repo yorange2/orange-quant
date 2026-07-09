@@ -245,6 +245,9 @@ def main():
     print("\n[Step 2/3] 重建 qlib 二进制...")
     _rebuild_qlib()
     coins = sorted([f.stem for f in RAW_DIR.glob("*.csv")])
+    if not coins:
+        print("\n⚠ 无数据文件，跳过重建")
+        return
     dates = sorted(pd.read_csv(RAW_DIR / f"{coins[0]}.csv")["date"].tolist())
     print(f"\n✅ 完成！{QLIB_DIR}")
     print(f"   币种: {len(coins)}, 时间: {dates[0]} ~ {dates[-1]}")
@@ -331,6 +334,9 @@ def rebuild_data(top: int = 50, start: str = "2020-01-01", force_download: bool 
     print("\n[Step 2/3] 重建 qlib 二进制...")
     _rebuild_qlib()
     coins = sorted([f.stem for f in RAW_DIR.glob("*.csv")])
+    if not coins:
+        print("\n⚠ 无数据文件，跳过重建")
+        return
     dates = sorted(pd.read_csv(RAW_DIR / f"{coins[0]}.csv")["date"].tolist())
     print(f"\n✅ 完成！{QLIB_DIR}")
     print(f"   币种: {len(coins)}, 时间: {dates[0]} ~ {dates[-1]}")

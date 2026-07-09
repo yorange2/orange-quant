@@ -270,7 +270,7 @@ class StrategyRunner:
             True = 模拟运行，不下单。
         """
         print(f"\n🚀 自动交易系统启动")
-        print(f"   环境: {'TESTNET (模拟)' if self.broker.testnet else '⚠ MAINNET (实盘)'}")
+        print(f"   环境: MAINNET")
         print(f"   模式: {'DRY RUN (观察)' if dry_run else '⚠ LIVE (实盘交易)'}")
         print(f"   币种: {len(self.coins)} 个")
         print(f"   持仓数: {self.topk}")

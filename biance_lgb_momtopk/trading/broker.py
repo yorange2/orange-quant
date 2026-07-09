@@ -1,7 +1,7 @@
 """
 Binance 交易所接口
 
-通过 ccxt 连接 Binance（支持 testnet 和 mainnet），
+通过 ccxt 连接 Binance，
 提供账户查询、行情获取、订单执行等功能。
 """
 
@@ -22,12 +22,12 @@ class BinanceBroker:
 
     使用方式：
 
-        # Testnet
-        broker = BinanceBroker(testnet=True)
+        # Paper trading（模拟账户，不下单）
+        broker = BinanceBroker(paper=True)
         print(broker.get_balances())
 
-        # Mainnet（需要改 .env 中的 key 为实盘 key）
-        broker = BinanceBroker(testnet=False)
+        # 实盘（需要设置 BINANCE_API_KEY / BIANCE_SECRET_KEY 环境变量）
+        broker = BinanceBroker(paper=False)
         broker.market_buy("BTC/USDT", 100)  # 买入100 USDT的BTC
     """
 
@@ -70,8 +70,7 @@ class BinanceBroker:
             if self.paper:
                 print(f"[broker] ✅ Binance Paper Trading 模式 (初始 ${self._paper_balance.get('USDT', 0):,.0f})")
             else:
-                env = "TESTNET" if self.testnet else "MAINNET"
-                print(f"[broker] ✅ Binance {env} 连接成功")
+                print(f"[broker] ✅ Binance MAINNET 连接成功")
         except Exception as e:
             print(f"[broker] ❌ 连接失败: {e}")
             raise
