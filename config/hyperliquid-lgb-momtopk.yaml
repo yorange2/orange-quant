@@ -1,0 +1,60 @@
+# =============================================================
+# Orange Quant Hyperliquid 永续合约实验
+# =============================================================
+# 数据来源: Hyperliquid REST API (2022~2026)
+# 币种: 成交量前 N（默认 50）
+# 成本: 永续合约 taker 0.05% ×2（Hyperliquid 标准费率）
+# =============================================================
+
+qlib_init:
+    provider_uri: "data/qlib_data/hyperliquid"
+
+data:
+    instruments: all
+
+train:
+    start: "2022-01-01"
+    end: "2025-06-30"
+valid:
+    start: "2025-07-01"
+    end: "2026-01-31"
+test:
+    start: "2026-02-01"
+    end: "2026-06-27"
+
+model:
+    kwargs:
+        loss: mse
+        num_boost_round: 500
+        early_stopping_rounds: 50
+        learning_rate: 0.03
+        num_leaves: 64
+        feature_fraction: 0.7
+        bagging_fraction: 0.7
+        bagging_freq: 1
+        min_data_in_leaf: 50
+        lambda_l1: 0.5
+        lambda_l2: 0.5
+        verbose_eval: 50
+
+strategy:
+    class: TopkDropoutStrategy
+    module_path: qlib.contrib.strategy.signal_strategy
+    kwargs:
+        signal: <PRED>
+        topk: 12
+        n_drop: 3
+        hold_thresh: 1
+        risk_degree: 0.95
+
+backtest:
+    benchmark: BTC
+    account: 1000000
+    freq: day
+    exchange_kwargs:
+        freq: day
+        limit_threshold: 1.0
+        deal_price: close
+        open_cost: 0.0005            # Hyperliquid taker 0.05%
+        close_cost: 0.0005           # Hyperliquid taker 0.05%
+        min_cost: 0
