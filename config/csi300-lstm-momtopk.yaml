@@ -1,20 +1,20 @@
 # =============================================================
-# Orange Quant 深度学习实验 — LSTM
+# Orange Quant deep learning experiment — LSTM
 # =============================================================
-# 用法：
+# Usage:
 #   python -c "from biance_lgb_momtopk.workflow.experiment import run_dl_from_yaml; run_dl_from_yaml('config/csi300-lstm-momtopk.yaml')"
 # =============================================================
 
-# ── qlib 初始化 ──
+# -- qlib initialization --
 qlib_init:
     provider_uri: "data/qlib_data/cn_data"
     region: cn
 
-# ── 数据配置 ──
+# -- Data config --
 data:
     instruments: csi300
 
-# ── 训练集 / 验证集 / 测试集 ──
+# -- Training / validation / test sets --
 train:
     start: "2008-01-01"
     end: "2014-12-31"
@@ -25,7 +25,7 @@ test:
     start: "2017-01-01"
     end: "2020-08-01"
 
-# ── 深度学习模型配置 ──
+# -- Deep learning model config --
 model:
     name: LSTM
     kwargs:
@@ -41,11 +41,11 @@ model:
         loss: mse
         GPU: 0
 
-# ── 时序数据集配置 ──
+# -- Time-series dataset config --
 dataset:
-    step_len: 20               # 回看窗口长度（天）
+    step_len: 20               # Lookback window length (days)
 
-# ── 策略配置 ──
+# -- Strategy config --
 strategy:
     class: TopkDropoutStrategy
     module_path: qlib.contrib.strategy.signal_strategy
@@ -56,7 +56,7 @@ strategy:
         hold_thresh: 1
         risk_degree: 0.95
 
-# ── 回测配置 ──
+# -- Backtest config --
 backtest:
     benchmark: SH000300
     account: 100000000

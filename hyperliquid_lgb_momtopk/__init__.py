@@ -1,6 +1,6 @@
 """
 Orange Quant — Hyperliquid LGB Momentum Top-K
-基于 Microsoft qlib + LightGBM，Hyperliquid 永续合约动量策略
+Hyperliquid perpetuals momentum strategy built on Microsoft qlib + LightGBM
 """
 
 __version__ = "0.1.0"

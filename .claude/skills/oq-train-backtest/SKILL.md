@@ -1,27 +1,27 @@
 ---
 name: oq-train-backtest
-description: 训练 LightGBM 模型并运行回测，输出 IC、收益率、夏普等指标
+description: Train a LightGBM model and run a backtest, outputting IC, returns, Sharpe, and other metrics
 argument-hint: "[config]"
 ---
 
 # Train & Backtest
 
-训练 LightGBM 模型并运行回测，输出 IC、收益率、夏普等指标。
+Train a LightGBM model and run a backtest, outputting IC, returns, Sharpe, and other metrics.
 
-## 触发条件
-- "训练模型" / "回测" / "跑实验" / "train" / "backtest"
-- "评估策略" / "看看效果"
+## Trigger conditions
+- "train model" / "backtest" / "run experiment" / "train" / "backtest"
+- "evaluate strategy" / "check performance"
 
-## 实验配置
+## Experiment configs
 
-| 配置 | 标的 | IC | 说明 |
+| Config | Universe | IC | Notes |
 |------|------|-----|------|
-| `csi300-lgb-momtopk` | A 股 CSI300 (820) | 0.027 | Alpha158 + LightGBM |
-| `binance-lgb-momtopk` | Binance 20 蓝筹 | ~0.02 | Binance 现货成本 |
+| `csi300-lgb-momtopk` | A-share CSI300 (820) | 0.027 | Alpha158 + LightGBM |
+| `binance-lgb-momtopk` | Binance top-20 blue chips | ~0.02 | Binance spot costs |
 
-## 运行
+## Running
 
-### 单个实验
+### Single experiment
 
 ```bash
 source .venv/bin/activate
@@ -29,7 +29,7 @@ python -m biance_lgb_momtopk.train binance-lgb-momtopk
 python -m biance_lgb_momtopk.train csi300-lgb-momtopk
 ```
 
-### 深度学习实验（LSTM/GRU/Transformer）
+### Deep learning experiment (LSTM/GRU/Transformer)
 
 ```bash
 source .venv/bin/activate
@@ -39,20 +39,20 @@ results = run_dl_from_yaml('config/csi300-lstm-momtopk.yaml')
 "
 ```
 
-> 注意：DL 训练需要 GPU，CPU 训练极慢。
+> Note: DL training needs a GPU; CPU training is extremely slow.
 
-## 输出指标
+## Output metrics
 
-- **IC** (>0.05 有效因子，>0.1 优秀)
-- **ICIR** (>0.5 稳定，>1.0 优秀)
-- **Rank IC** (排名相关系数，更稳健)
-- **年化超额收益** (含/不含交易成本)
-- **Information Ratio** (>1.0 优秀)
-- **最大回撤**
+- **IC** (>0.05 effective factor, >0.1 excellent)
+- **ICIR** (>0.5 stable, >1.0 excellent)
+- **Rank IC** (rank correlation, more robust)
+- **Annualized excess return** (with/without trading costs)
+- **Information Ratio** (>1.0 excellent)
+- **Max drawdown**
 
-## 模型导出
+## Model export
 
-训练完成后，模型**自动导出**到 `models/` 目录：
+After training, the model is **automatically exported** to the `models/` directory:
 
 ```
 binance-lgb-momtopk  →  models/binance-lgb-momtopk.pkl
@@ -60,4 +60,4 @@ csi300-lgb-momtopk   →  models/csi300-lgb-momtopk.pkl
 csi300-lstm-momtopk  →  models/csi300-lstm-momtopk.pkl
 ```
 
-实盘交易直接加载对应 pkl 文件即可。
+Live trading simply loads the corresponding pkl file.

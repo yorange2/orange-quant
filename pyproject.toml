@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "orange-quant"
 version = "0.1.0"
-description = "量化交易算法框架 — 基于 Microsoft qlib"
+description = "Quantitative trading algorithm framework — built on Microsoft qlib"
 requires-python = ">=3.8"
 readme = "README.md"
 license = { text = "MIT" }

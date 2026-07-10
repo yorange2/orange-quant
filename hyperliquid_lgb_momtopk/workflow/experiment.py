@@ -1,8 +1,8 @@
 """
-完整实验流程
+Full experiment pipeline
 
-编排 qlib 的完整量化实验：
-  数据加载 → 模型训练 → 信号生成 → 信号分析（IC）→ 回测 → 绩效分析
+Orchestrates the complete qlib quantitative experiment:
+  data loading -> model training -> signal generation -> signal analysis (IC) -> backtest -> performance analysis
 """
 
 from pathlib import Path
@@ -21,7 +21,7 @@ from qlib.contrib.model.gbdt import LGBModel
 
 class QuantExperiment:
     """
-    量化实验管理器 — Hyperliquid 永续合约。
+    Quantitative experiment manager — Hyperliquid perpetuals.
     """
 
     def __init__(
@@ -55,7 +55,7 @@ class QuantExperiment:
 
     @classmethod
     def from_yaml(cls, config_path: str) -> "QuantExperiment":
-        """从 YAML 配置文件创建实验"""
+        """Create an experiment from a YAML config file"""
         with open(config_path, "r") as f:
             config = yaml.safe_load(f)
 
@@ -84,17 +84,17 @@ class QuantExperiment:
         )
 
     def run(self) -> dict:
-        """执行完整实验流程"""
+        """Execute the full experiment pipeline"""
         print("\n" + "=" * 60)
-        print("🚀 Orange Quant Hyperliquid 现货实验开始")
+        print("🚀 Orange Quant Hyperliquid spot experiment starting")
         print("=" * 60 + "\n")
 
-        # Step 1: 初始化 qlib
-        print(f"[hyperliquid_lgb_momtopk] 初始化 qlib, 数据路径: {self.provider_uri}")
+        # Step 1: initialize qlib
+        print(f"[hyperliquid_lgb_momtopk] Initializing qlib, data path: {self.provider_uri}")
         qlib.init(provider_uri=self.provider_uri, region=self.region)
 
-        # Step 2: 构建数据集
-        print(f"[hyperliquid_lgb_momtopk] 加载数据: {self.instruments}")
+        # Step 2: build dataset
+        print(f"[hyperliquid_lgb_momtopk] Loading data: {self.instruments}")
         handler = Alpha158(
             instruments=self.instruments,
             start_time=self.train_start,
@@ -111,17 +111,17 @@ class QuantExperiment:
                 "test": (self.test_start, self.test_end),
             },
         )
-        print(f"[hyperliquid_lgb_momtopk] 数据集构建完成: "
+        print(f"[hyperliquid_lgb_momtopk] Dataset built: "
               f"train={self.train_start}~{self.train_end}, "
               f"valid={self.valid_start}~{self.valid_end}, "
               f"test={self.test_start}~{self.test_end}")
 
-        # Step 3: 训练模型
+        # Step 3: train model
         model = LGBModel(**self.model_params)
         model.fit(dataset)
         predictions = model.predict(dataset, segment="test")
 
-        # Step 4: 记录实验
+        # Step 4: record experiment
         if mlflow.active_run():
             mlflow.end_run()
 
@@ -170,7 +170,7 @@ class QuantExperiment:
             par.generate()
 
         print("\n" + "=" * 60)
-        print("✅ 实验完成！使用 `R.get_recorder()` 查看结果。")
+        print("✅ Experiment complete! Use `R.get_recorder()` to view results.")
         print("=" * 60 + "\n")
 
         return {
@@ -181,7 +181,7 @@ class QuantExperiment:
 
 
 def run_from_yaml(config_path: str = "config/hyperliquid-lgb-momtopk.yaml") -> dict:
-    """从 YAML 配置运行实验并导出模型"""
+    """Run an experiment from a YAML config and export the model"""
     import pickle
 
     experiment = QuantExperiment.from_yaml(config_path)
@@ -192,6 +192,6 @@ def run_from_yaml(config_path: str = "config/hyperliquid-lgb-momtopk.yaml") -> d
     config_name = Path(config_path).stem
     output_path = model_path / f"{config_name}.pkl"
     pickle.dump(results["model"], open(output_path, "wb"))
-    print(f"💾 模型已导出至 {output_path}")
+    print(f"💾 Model exported to {output_path}")
 
     return results

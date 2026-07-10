@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Orange Quant Hyperliquid 现货自动交易服务器
+Orange Quant Hyperliquid spot automated trading server
 
-在 Docker 中长期运行，每日定时调仓。
-用法：
-    python -m hyperliquid_lgb_momtopk.server                 # 默认每日 00:15 UTC 调仓
-    python -m hyperliquid_lgb_momtopk.server --dry-run       # 只分析不下单
-    python -m hyperliquid_lgb_momtopk.server --once          # 执行一次后退出
+Runs long-term in Docker, rebalancing on a daily schedule.
+Usage:
+    python -m hyperliquid_lgb_momtopk.server                 # rebalance daily at 00:15 UTC by default
+    python -m hyperliquid_lgb_momtopk.server --dry-run       # analyze only, no orders placed
+    python -m hyperliquid_lgb_momtopk.server --once          # run once then exit
 """
 
 import sys
@@ -40,23 +40,23 @@ _shutdown = False
 
 def on_signal(signum, frame):
     global _shutdown
-    logger.info(f"收到信号 {signum}，准备安全退出...")
+    logger.info(f"Received signal {signum}, shutting down safely...")
     _shutdown = True
 
 
 def retrain_model(model_path: str):
-    """增量更新数据 + 重新训练模型"""
-    logger.info("📥 增量更新数据...")
+    """Incrementally refresh data + retrain the model"""
+    logger.info("📥 Refreshing data incrementally...")
     rebuild_data()
     config_name = Path(model_path).stem
-    logger.info(f"🚀 重新训练: {config_name}")
+    logger.info(f"🚀 Retraining: {config_name}")
     from hyperliquid_lgb_momtopk.workflow.experiment import run_from_yaml
     run_from_yaml(f"config/{config_name}.yaml")
-    logger.info("✅ 模型已更新")
+    logger.info("✅ Model updated")
 
 
 def run_rebalance(broker, coins, dry_run, topk, lookback, min_trade, model_path=None):
-    """执行一次调仓"""
+    """Execute a single rebalance"""
     try:
         runner = StrategyRunner(
             broker=broker,
@@ -69,7 +69,7 @@ def run_rebalance(broker, coins, dry_run, topk, lookback, min_trade, model_path=
         result = runner.run_once(dry_run=dry_run)
 
         if result["status"] != "ok":
-            logger.warning(f"调仓异常: {result}")
+            logger.warning(f"Rebalance issue: {result}")
             return
 
         balances = broker.get_balances()
@@ -83,29 +83,29 @@ def run_rebalance(broker, coins, dry_run, topk, lookback, min_trade, model_path=
                 p = prices.get(coin, 0)
                 total_value += amt * p
 
-        logger.info(f"💰 总资产: ${total_value:,.2f} | USDC: ${usdc:,.2f} | 持仓: {len(positions)} 个")
-        logger.info(f"📊 目标持仓: {result['target_coins']}")
+        logger.info(f"💰 Total equity: ${total_value:,.2f} | USDC: ${usdc:,.2f} | Positions: {len(positions)}")
+        logger.info(f"📊 Target holdings: {result['target_coins']}")
         if result["trades"]:
             for t in result["trades"]:
-                logger.info(f"  成交: {t[0]} {t[1]} ${t[2]:.2f}")
+                logger.info(f"  Filled: {t[0]} {t[1]} ${t[2]:.2f}")
         else:
-            logger.info("   无调仓变动")
+            logger.info("   No rebalance changes")
 
     except Exception as e:
-        logger.error(f"调仓失败: {e}", exc_info=True)
+        logger.error(f"Rebalance failed: {e}", exc_info=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Orange Quant Hyperliquid Trading Server")
-    parser.add_argument("--hour", type=int, default=0, help="每日调仓时间 (UTC 小时)")
-    parser.add_argument("--minute", type=int, default=15, help="每日调仓时间 (分钟)")
-    parser.add_argument("--dry-run", action="store_true", help="只分析不下单")
-    parser.add_argument("--once", action="store_true", help="执行一次后退出")
-    parser.add_argument("--topk", type=int, default=DEFAULT_TOP_K, help="持仓数量")
-    parser.add_argument("--lookback", type=int, default=DEFAULT_LOOKBACK, help="回看天数")
-    parser.add_argument("--min-trade", type=float, default=DEFAULT_MIN_TRADE, help="最小交易金额 USDC")
-    parser.add_argument("--model", type=str, default="models/hyperliquid-lgb-momtopk.pkl", help="LightGBM 模型路径")
-    parser.add_argument("--retrain", action="store_true", help="调仓前先更新数据并重新训练模型")
+    parser.add_argument("--hour", type=int, default=0, help="Daily rebalance time (UTC hour)")
+    parser.add_argument("--minute", type=int, default=15, help="Daily rebalance time (minute)")
+    parser.add_argument("--dry-run", action="store_true", help="Analyze only, no orders placed")
+    parser.add_argument("--once", action="store_true", help="Run once then exit")
+    parser.add_argument("--topk", type=int, default=DEFAULT_TOP_K, help="Number of positions to hold")
+    parser.add_argument("--lookback", type=int, default=DEFAULT_LOOKBACK, help="Lookback window in days")
+    parser.add_argument("--min-trade", type=float, default=DEFAULT_MIN_TRADE, help="Minimum trade size in USDC")
+    parser.add_argument("--model", type=str, default="models/hyperliquid-lgb-momtopk.pkl", help="LightGBM model path")
+    parser.add_argument("--retrain", action="store_true", help="Refresh data and retrain the model before rebalancing")
     args = parser.parse_args()
 
     signal.signal(signal.SIGINT, on_signal)
@@ -119,10 +119,10 @@ def main():
 
     mode = "DRY RUN" if args.dry_run else "LIVE"
     logger.info("=" * 50)
-    logger.info(f"🤖 Orange Quant Hyperliquid 交易服务器启动")
-    logger.info(f"   环境: MAINNET | 模式: {mode}")
-    logger.info(f"   币种: {len(coins)} | TopK: {args.topk}")
-    logger.info(f"   调仓时间: 每日 {args.hour:02d}:{args.minute:02d} UTC")
+    logger.info(f"🤖 Orange Quant Hyperliquid trading server starting")
+    logger.info(f"   Environment: MAINNET | Mode: {mode}")
+    logger.info(f"   Coins: {len(coins)} | TopK: {args.topk}")
+    logger.info(f"   Rebalance time: daily at {args.hour:02d}:{args.minute:02d} UTC")
     logger.info("=" * 50)
 
     try:
@@ -132,9 +132,9 @@ def main():
             broker = HyperliquidBroker()
             balances = broker.get_balances()
             usdc = balances.get("USDC", 0)
-            logger.info(f"💰 当前 USDC: ${usdc:,.2f}")
+            logger.info(f"💰 Current USDC: ${usdc:,.2f}")
     except Exception as e:
-        logger.error(f"交易所连接失败: {e}")
+        logger.error(f"Exchange connection failed: {e}")
         sys.exit(1)
 
     if args.once:
@@ -150,7 +150,7 @@ def main():
             target += timedelta(days=1)
 
         wait_seconds = (target - now).total_seconds()
-        logger.info(f"⏰ 下次调仓: {target.strftime('%Y-%m-%d %H:%M:%S')} UTC (等待 {wait_seconds/3600:.1f}h)")
+        logger.info(f"⏰ Next rebalance: {target.strftime('%Y-%m-%d %H:%M:%S')} UTC (waiting {wait_seconds/3600:.1f}h)")
 
         while wait_seconds > 0 and not _shutdown:
             sleep_time = min(wait_seconds, 60)
@@ -164,7 +164,7 @@ def main():
             retrain_model(args.model)
         run_rebalance(broker, coins, args.dry_run, args.topk, args.lookback, args.min_trade, args.model)
 
-    logger.info("👋 服务器已安全退出")
+    logger.info("👋 Server shut down safely")
 
 
 if __name__ == "__main__":

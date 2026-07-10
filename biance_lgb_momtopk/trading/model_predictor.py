@@ -1,10 +1,10 @@
 """
-LightGBM 模型预测器
+LightGBM model predictor
 
-加载训练好的 qlib LGBModel，使用 qlib Alpha158 特征引擎，
-从 Binance 实时 OHLCV 数据生成预测排名。
+Loads a trained qlib LGBModel, uses the qlib Alpha158 feature engine,
+and generates predicted rankings from live Binance OHLCV data.
 
-使用方式：
+Usage:
     predictor = ModelPredictor(model_path="models/binance-lgb-momtopk.pkl")
     scores = predictor.predict(broker, coins=["BTC", "ETH", ...])
 """
@@ -22,10 +22,10 @@ from .broker import BinanceBroker
 
 class ModelPredictor:
     """
-    LightGBM 模型预测器。
+    LightGBM model predictor.
 
-    用 qlib 的 Alpha158 特征引擎从 OHLCV 计算 158 个因子，
-    加载训练好的 LGBModel，通过 qlib DatasetH 接口进行预测。
+    Uses qlib's Alpha158 feature engine to compute 158 factors from OHLCV,
+    loads the trained LGBModel, and predicts via the qlib DatasetH interface.
     """
 
     def __init__(self, model_path: str):
@@ -36,7 +36,7 @@ class ModelPredictor:
     def _load_model(self):
         with open(self.model_path, "rb") as f:
             self.model = pickle.load(f)
-        print(f"[predictor] ✅ 模型已加载: {self.model_path.name}")
+        print(f"[predictor] ✅ Model loaded: {self.model_path.name}")
 
     def predict(
         self,
@@ -45,15 +45,15 @@ class ModelPredictor:
         lookback_days: int = 160,
     ) -> pd.DataFrame:
         """
-        使用模型预测，返回币种排名。
+        Predict using the model, returning a coin ranking.
 
         Parameters
         ----------
         broker : BinanceBroker
         coins : list[str]
-            币种列表（不含 USDT）。
+            Coin list (without USDT).
         lookback_days : int
-            回看天数（Alpha158 至少需要 90 天，推荐 ≥ 160）。
+            Lookback window in days (Alpha158 needs at least 90 days, 160+ recommended).
 
         Returns
         -------
@@ -61,12 +61,12 @@ class ModelPredictor:
             columns: coin, score, rank
         """
         if self.model is None:
-            raise RuntimeError("模型未加载")
+            raise RuntimeError("Model not loaded")
 
-        # 1. 从 Binance 获取 OHLCV
-        print(f"[predictor] 获取 {len(coins)} 个币种 {lookback_days} 天数据...")
+        # 1. Fetch OHLCV from Binance
+        print(f"[predictor] Fetching {lookback_days} days of data for {len(coins)} coins...")
         records = []
-        latest_prices = {}  # coin → 最新收盘价
+        latest_prices = {}  # coin -> latest close price
         for coin in coins:
             sym = f"{coin}/USDT"
             try:
@@ -81,24 +81,24 @@ class ModelPredictor:
                 print(f"  {coin}: {e}")
 
         if len(records) < 3:
-            print("[predictor] ⚠ 有效数据不足")
+            print("[predictor] ⚠ Not enough valid data")
             return pd.DataFrame()
 
         raw_df = pd.concat(records, ignore_index=True)
         raw_df = raw_df.rename(columns={"datetime": "date"})
 
-        # 2. 构建 qlib DatasetH（Alpha158 特征 + 数据接口）
-        print(f"[predictor] 计算 Alpha158 + 模型预测...")
+        # 2. Build a qlib DatasetH (Alpha158 features + data interface)
+        print(f"[predictor] Computing Alpha158 + model predictions...")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             dataset, latest_date = self._create_dataset(raw_df, coins)
 
-        # 3. 用 qlib LGBModel.predict() 标准接口推理
+        # 3. Run inference through the standard qlib LGBModel.predict() interface
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             scores = self.model.predict(dataset, segment="pred")
 
-        # scores 的 index 是 MultiIndex (datetime, instrument)，提取 instrument
+        # scores' index is a MultiIndex (datetime, instrument); extract instrument
         coins_pred = [idx[1] for idx in scores.index]
         result = pd.DataFrame({
             "coin": coins_pred,
@@ -113,14 +113,14 @@ class ModelPredictor:
 
     def _create_dataset(self, raw_df, coins):
         """
-        用 qlib Alpha158 handler 构建 DatasetH。
+        Build a DatasetH using the qlib Alpha158 handler.
 
         Returns
         -------
         dataset : DatasetH
-            qlib 数据集，segment "pred" 对应最新一天。
+            qlib dataset, the "pred" segment corresponds to the latest day.
         latest_date : str
-            最新日期字符串。
+            Latest date string.
         """
         import qlib
         from qlib.data.dataset import DatasetH
@@ -129,7 +129,7 @@ class ModelPredictor:
         start = str(raw_df["date"].min().strftime("%Y-%m-%d"))
         end = str(raw_df["date"].max().strftime("%Y-%m-%d"))
 
-        # 初始化 qlib，指向本地 binance 数据目录
+        # Initialize qlib, pointing at the local binance data directory
         try:
             qlib.init(provider_uri="data/qlib_data/binance", region="cn", auto_mount=False)
         except Exception:
@@ -143,11 +143,11 @@ class ModelPredictor:
             fit_end_time=end,
         )
 
-        # 获取全部特征，找到最新日期
+        # Fetch all features, find the latest date
         features = handler.fetch(col_set="feature")
         latest_date = str(features.index.get_level_values("datetime").max().strftime("%Y-%m-%d"))
 
-        # 用 handler 构建 DatasetH，segment "pred" 精确对应最新日期
+        # Build a DatasetH with the handler; the "pred" segment maps exactly to the latest date
         dataset = DatasetH(
             handler=handler,
             segments={"pred": (latest_date, latest_date)},

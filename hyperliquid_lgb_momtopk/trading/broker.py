@@ -1,12 +1,12 @@
 """
-Hyperliquid 交易所接口
+Hyperliquid exchange interface
 
-通过 REST API 连接 Hyperliquid 去中心化现货交易所，
-提供账户查询、行情获取、订单执行等功能。
+Connects to the Hyperliquid decentralized spot exchange via its REST API,
+providing account queries, market data, and order execution.
 
 Hyperliquid API:
-    - 公开数据: POST https://api.hyperliquid.xyz/info
-    - 现货交易: 需要使用官方 SDK (hyperliquid-python-sdk)
+    - Public data: POST https://api.hyperliquid.xyz/info
+    - Spot trading: requires the official SDK (hyperliquid-python-sdk)
 """
 
 import os
@@ -24,16 +24,16 @@ _HL_INFO = "https://api.hyperliquid.xyz/info"
 
 class HyperliquidBroker:
     """
-    Hyperliquid 现货实盘交易所封装。
+    Hyperliquid live spot trading wrapper.
 
-    使用方式：
+    Usage:
 
         broker = HyperliquidBroker()
-        broker.market_buy("PURR", 100)  # 买入100 USDC的PURR
+        broker.market_buy("PURR", 100)  # buy 100 USDC worth of PURR
     """
 
     def __init__(self):
-        """需要设置 HYPERLIQUID_PRIVATE_KEY 环境变量"""
+        """Requires the HYPERLIQUID_PRIVATE_KEY environment variable to be set"""
         self.private_key = os.getenv("HYPERLIQUID_PRIVATE_KEY", "")
         self.address = os.getenv("HYPERLIQUID_ADDRESS", "")
 
@@ -47,32 +47,32 @@ class HyperliquidBroker:
                 private_key=self.private_key,
             )
         except ImportError:
-            print("[broker] ⚠ hyperliquid-python-sdk 未安装，仅支持行情查询")
+            print("[broker] ⚠ hyperliquid-python-sdk not installed, market data only")
             self.exchange = None
 
         self._verify_connection()
 
     def _verify_connection(self):
-        """验证连接"""
+        """Verify the connection"""
         try:
             meta = self._api_post({"type": "spotMeta"})
-            print(f"[broker] ✅ Hyperliquid Spot MAINNET 连接成功 (现货代币: {len(meta['tokens'])} 个)")
+            print(f"[broker] ✅ Connected to Hyperliquid Spot MAINNET ({len(meta['tokens'])} spot tokens)")
         except Exception as e:
-            print(f"[broker] ❌ 连接失败: {e}")
+            print(f"[broker] ❌ Connection failed: {e}")
             raise
 
     def _api_post(self, payload: dict) -> dict:
-        """发送 POST 请求到 Hyperliquid Info API"""
+        """Send a POST request to the Hyperliquid Info API"""
         resp = requests.post(_HL_INFO, json=payload, timeout=10)
         resp.raise_for_status()
         return resp.json()
 
     def get_balances(self) -> Dict[str, float]:
-        """获取账户余额（现货余额 + USDC）"""
+        """Get account balances (spot balances + USDC)"""
         if not self.address:
             return {"USDC": 0.0}
         try:
-            # 获取现货余额
+            # Get spot balances
             balances = self._api_post({"type": "spotClearinghouseState", "user": self.address})
             result = {}
             for b in balances.get("balances", []):
@@ -80,30 +80,30 @@ class HyperliquidBroker:
                 amount = float(b.get("total", 0))
                 if amount > 0:
                     result[coin] = amount
-            # 也查询 USDC 余额
+            # Also query the USDC balance
             result["USDC"] = float(balances.get("withdrawable", 0))
             return result
         except Exception as e:
-            print(f"[broker] ❌ 获取余额失败: {e}")
+            print(f"[broker] ❌ Failed to get balances: {e}")
             return {"USDC": 0.0}
 
     def get_usdt_balance(self) -> float:
-        """获取 USDC 余额"""
+        """Get the USDC balance"""
         return self.get_balances().get("USDC", 0.0)
 
     def get_current_prices(self, coins: List[str]) -> Dict[str, float]:
-        """获取当前中间价"""
+        """Get current mid prices"""
         try:
             all_mids = self._api_post({"type": "allMids"})
             return {coin: float(price) for coin, price_str in all_mids.items()
                     if coin in coins and price_str}
         except Exception as e:
-            print(f"[broker] ❌ 获取价格失败: {e}")
+            print(f"[broker] ❌ Failed to get prices: {e}")
             return {}
 
     def fetch_ohlcv(self, coin: str, timeframe: str = "1d", limit: int = 365) -> pd.DataFrame:
         """
-        获取 K 线数据。
+        Fetch OHLCV candle data.
         Returns pd.DataFrame with columns: datetime, open, high, low, close, volume
         """
         import time
@@ -131,33 +131,33 @@ class HyperliquidBroker:
         return df
 
     def market_buy(self, coin: str, amount_usdc: float) -> Optional[dict]:
-        """市价买入现货（IOC 限价单，滑点 1%）"""
+        """Market-buy spot (IOC limit order, 1% slippage)"""
         try:
             if not self.exchange:
-                print(f"[broker] ❌ SDK 未安装，无法下单")
+                print(f"[broker] ❌ SDK not installed, cannot place orders")
                 return None
             price = self._get_mid(coin)
             if price <= 0:
                 return None
             sz = amount_usdc / price
-            # SIOC = 市价立即成交或取消，limitPx 设为高于市价 1% 确保成交
+            # IOC = fill immediately or cancel; limitPx set 1% above mid to ensure a fill
             order = self.exchange.order(
                 coin, True, sz,
                 {"limit": {"tif": "Ioc"}},
                 None,
                 round(price * 1.01, 6),
             )
-            print(f"[broker] ✅ 买入 {coin} sz={sz:.4f} @ ~${price:.2f} = ~${amount_usdc:.2f}")
+            print(f"[broker] ✅ Bought {coin} sz={sz:.4f} @ ~${price:.2f} = ~${amount_usdc:.2f}")
             return order
         except Exception as e:
-            print(f"[broker] ❌ 买入 {coin} 失败: {e}")
+            print(f"[broker] ❌ Failed to buy {coin}: {e}")
             return None
 
     def market_sell(self, coin: str, amount: float) -> Optional[dict]:
-        """市价卖出现货（IOC 限价单，滑点 1%）"""
+        """Market-sell spot (IOC limit order, 1% slippage)"""
         try:
             if not self.exchange:
-                print(f"[broker] ❌ SDK 未安装，无法下单")
+                print(f"[broker] ❌ SDK not installed, cannot place orders")
                 return None
             price = self._get_mid(coin)
             if price <= 0:
@@ -168,18 +168,18 @@ class HyperliquidBroker:
                 None,
                 round(price * 0.99, 6),
             )
-            print(f"[broker] ✅ 卖出 {coin} sz={amount:.4f} @ ~${price:.2f}")
+            print(f"[broker] ✅ Sold {coin} sz={amount:.4f} @ ~${price:.2f}")
             return order
         except Exception as e:
-            print(f"[broker] ❌ 卖出 {coin} 失败: {e}")
+            print(f"[broker] ❌ Failed to sell {coin}: {e}")
             return None
 
     def _get_mid(self, coin: str) -> float:
-        """获取单个币种的中间价"""
+        """Get the mid price for a single coin"""
         return self.get_current_prices([coin]).get(coin, 0)
 
     def get_open_orders(self) -> list:
-        """获取未成交订单"""
+        """Get open (unfilled) orders"""
         if not self.address:
             return []
         try:
@@ -188,7 +188,7 @@ class HyperliquidBroker:
             return []
 
     def cancel_all_orders(self):
-        """取消所有未成交订单"""
+        """Cancel all open orders"""
         if not self.exchange:
             return
         orders = self.get_open_orders()
@@ -197,16 +197,16 @@ class HyperliquidBroker:
                 self.exchange.cancel(o["coin"], o["oid"])
             except Exception:
                 pass
-        print(f"[broker] 已取消 {len(orders)} 个挂单")
+        print(f"[broker] Cancelled {len(orders)} open orders")
 
 
 class PaperBroker:
     """
-    模拟交易所（Paper Trading）。
+    Simulated exchange (paper trading).
 
-    使用公开 API 获取行情，本地模拟账户。
+    Uses the public API for market data, simulates the account locally.
 
-    使用方式：
+    Usage:
 
         broker = PaperBroker(coins=["BTC", "ETH"], initial_usdc=10000)
     """
@@ -220,13 +220,13 @@ class PaperBroker:
         self._verify_connection()
 
     def _verify_connection(self):
-        """验证连接"""
+        """Verify the connection"""
         try:
             meta = self._api_post({"type": "spotMeta"})
-            print(f"[broker] ✅ Hyperliquid Paper Trading 模式 "
-                  f"(初始 ${self._balance.get('USDC', 0):,.0f}, {len(meta['tokens'])} 个现货代币)")
+            print(f"[broker] ✅ Hyperliquid Paper Trading mode "
+                  f"(initial ${self._balance.get('USDC', 0):,.0f}, {len(meta['tokens'])} spot tokens)")
         except Exception as e:
-            print(f"[broker] ❌ 连接失败: {e}")
+            print(f"[broker] ❌ Connection failed: {e}")
             raise
 
     def _api_post(self, payload: dict) -> dict:
@@ -246,7 +246,7 @@ class PaperBroker:
             return {coin: float(price) for coin, price_str in all_mids.items()
                     if coin in coins and price_str}
         except Exception as e:
-            print(f"[broker] ❌ 获取价格失败: {e}")
+            print(f"[broker] ❌ Failed to get prices: {e}")
             return {}
 
     def fetch_ohlcv(self, coin: str, timeframe: str = "1d", limit: int = 365) -> pd.DataFrame:
@@ -292,7 +292,7 @@ class PaperBroker:
             print(f"[broker] 📝 Paper BUY  {coin} sz={sz:.4f} @ ${price:.2f} = ${cost:.2f}")
             return {"coin": coin, "side": "buy", "size": sz, "price": price, "status": "paper"}
         except Exception as e:
-            print(f"[broker] ❌ 买入 {coin} 失败: {e}")
+            print(f"[broker] ❌ Failed to buy {coin}: {e}")
             return None
 
     def market_sell(self, coin: str, amount: float) -> Optional[dict]:
@@ -309,7 +309,7 @@ class PaperBroker:
             print(f"[broker] 📝 Paper SELL {coin} sz={amount:.4f} @ ${price:.2f} = ${amount*price:.2f}")
             return {"coin": coin, "side": "sell", "size": amount, "price": price, "status": "paper"}
         except Exception as e:
-            print(f"[broker] ❌ 卖出 {coin} 失败: {e}")
+            print(f"[broker] ❌ Failed to sell {coin}: {e}")
             return None
 
     def get_open_orders(self) -> list:

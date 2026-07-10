@@ -1,37 +1,37 @@
 # =============================================================
-# Orange Quant 工作流配置文件
+# Orange Quant workflow config file
 # =============================================================
-# 用法：
+# Usage:
 #   python -c "from biance_lgb_momtopk.workflow.experiment import run_from_yaml; run_from_yaml('config/csi300-lgb-momtopk.yaml')"
 # =============================================================
 
-# ── qlib 初始化 ──
+# -- qlib initialization --
 qlib_init:
-    provider_uri: "data/qlib_data/cn_data"  # qlib 数据目录
-    region: cn                                   # A股市场
+    provider_uri: "data/qlib_data/cn_data"  # qlib data directory
+    region: cn                                   # A-share market
 
-# ── 数据配置 ──
+# -- Data config --
 data:
-    instruments: csi300                         # 股票池: csi300 / csi500 / all
-    start_time: "2010-01-01"                    # 数据起始
-    end_time: "2020-08-01"                      # 数据结束
+    instruments: csi300                         # Stock universe: csi300 / csi500 / all
+    start_time: "2010-01-01"                    # Data start
+    end_time: "2020-08-01"                      # Data end
 
-# ── 训练集 ──
+# -- Training set --
 train:
     start: "2010-01-01"
     end: "2014-12-31"
 
-# ── 验证集 ──
+# -- Validation set --
 valid:
     start: "2015-01-01"
     end: "2016-12-31"
 
-# ── 测试集（回测期） ──
+# -- Test set (backtest period) --
 test:
     start: "2017-01-01"
     end: "2020-08-01"
 
-# ── 模型配置（biance_lgb_momtopk LightGBM 训练器） ──
+# -- Model config (biance_lgb_momtopk LightGBM trainer) --
 model:
     kwargs:
         loss: mse
@@ -44,19 +44,19 @@ model:
         bagging_freq: 5
         verbose_eval: 50
 
-# ── 策略配置（biance_lgb_momtopk 动量TopK策略） ──
+# -- Strategy config (biance_lgb_momtopk momentum TopK strategy) --
 strategy:
     class: TopkDropoutStrategy
     module_path: qlib.contrib.strategy.signal_strategy
     kwargs:
-        signal: <PRED>     # 使用模型预测分数
-        topk: 50            # 持有50只股票
-        n_drop: 5           # 每日换仓5只
-        hold_thresh: 1      # 最少持有1天
-        risk_degree: 0.95   # 仓位比例
+        signal: <PRED>     # Use the model's predicted score
+        topk: 50            # Hold 50 stocks
+        n_drop: 5           # Rotate 5 stocks per day
+        hold_thresh: 1      # Hold at least 1 day
+        risk_degree: 0.95   # Position sizing ratio
 
-# ── 回测配置 ──
+# -- Backtest config --
 backtest:
-    benchmark: SH000300    # 沪深300基准
-    account: 100000000      # 初始资金 1亿
-    freq: day               # 日频交易
+    benchmark: SH000300    # CSI 300 benchmark
+    account: 100000000      # Initial capital: 100 million
+    freq: day               # Daily frequency trading

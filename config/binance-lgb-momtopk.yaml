@@ -1,9 +1,9 @@
 # =============================================================
-# Orange Quant Binance 现货实验 — 42 币种
+# Orange Quant Binance spot experiment — 42 coins
 # =============================================================
-# 数据来源: Binance 公开 API (2020-01 ~ 2026-06)
-# 币种: 20 蓝筹 (BTC, ETH, SOL 等)
-# 成本: 现货 taker 0.1% ×2 (Binance 标准费率)
+# Data source: Binance public API (2020-01 ~ 2026-06)
+# Coins: 20 blue chips (BTC, ETH, SOL, etc.)
+# Costs: spot taker 0.1% x2 (Binance standard fee rate)
 # =============================================================
 
 qlib_init:
@@ -42,8 +42,8 @@ strategy:
     module_path: qlib.contrib.strategy.signal_strategy
     kwargs:
         signal: <PRED>
-        topk: 12               # 20币种中持有前12
-        n_drop: 3               # 每日换3只
+        topk: 12               # Hold the top 12 out of 20 coins
+        n_drop: 3               # Rotate 3 per day
         hold_thresh: 1
         risk_degree: 0.95
 

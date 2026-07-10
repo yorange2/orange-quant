@@ -1,38 +1,38 @@
 ---
 name: oq-download-data
-description: 下载量化实验所需的数据集，支持 A 股、Binance 现货日线
+description: Download the datasets needed for quant experiments, supporting A-shares and Binance spot daily bars
 ---
 
 # Download Datasets
 
-下载量化实验所需的数据集。支持 A 股、Binance 现货日线。
+Download the datasets needed for quant experiments. Supports A-shares and Binance spot daily bars.
 
-## 触发条件
-- "下载数据" / "download data"
-- "构建数据集" / "build dataset"
+## Trigger conditions
+- "download data" / "download data"
+- "build dataset" / "build dataset"
 
-## 可用数据集
+## Available datasets
 
-### A 股（qlib 官方数据，已下载可跳过）
+### A-shares (official qlib data, skip if already downloaded)
 
 ```bash
 source .venv/bin/activate
 python scripts/csi300/build_data.py
 ```
 
-数据存放: `data/qlib_data/cn_data/`（约 1-2 GB）
+Data location: `data/qlib_data/cn_data/` (~1-2 GB)
 
-### Binance 现货日线（Top 50 成交量）
+### Binance spot daily bars (top 50 by volume)
 
 ```bash
 source .venv/bin/activate
 python -m biance_lgb_momtopk.data.build --top 50
 ```
 
-数据存放: `data/qlib_data/binance/`（qlib 格式）、`data/binance_raw/`（原始 CSV）
+Data location: `data/qlib_data/binance/` (qlib format), `data/binance_raw/` (raw CSV)
 
-## 注意事项
+## Notes
 
-- 首次下载需要联网，耗时取决于网络
-- Binance 数据从公开 API 获取，无需 API key
-- 数据目录在 `.gitignore` 中，不会被提交
+- The first download requires internet access; time depends on network speed
+- Binance data comes from the public API, no API key required
+- The data directory is in `.gitignore` and won't be committed

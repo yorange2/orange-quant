@@ -1,8 +1,8 @@
 """
-自动交易策略执行器
+Automated trading strategy runner
 
-加载训练好的 LightGBM 模型，每日获取行情数据，
-生成预测信号，执行调仓操作。
+Loads a trained LightGBM model, fetches market data daily,
+generates predicted signals, and executes rebalancing.
 """
 
 import time
@@ -18,9 +18,9 @@ from .broker import BinanceBroker, PaperBroker
 
 class StrategyRunner:
     """
-    自动交易策略执行器。
+    Automated trading strategy runner.
 
-    使用方式：
+    Usage:
 
         runner = StrategyRunner(
             broker=broker,
@@ -28,8 +28,8 @@ class StrategyRunner:
             topk=5,
             rebalance_interval_hours=24,
         )
-        runner.run_once()   # 单次调仓
-        # runner.run_loop() # 持续运行
+        runner.run_once()   # single rebalance
+        # runner.run_loop() # run continuously
     """
 
     def __init__(
@@ -48,19 +48,19 @@ class StrategyRunner:
         ----------
         broker : BinanceBroker or PaperBroker
         coins : list[str]
-            交易币种（不含 USDT 后缀）。
+            Traded coins (without the USDT suffix).
         topk : int
-            持仓数量。
+            Number of positions to hold.
         lookback_days : int
-            动量/模型回看天数。
+            Momentum/model lookback window in days.
         rebalance_interval_hours : int
-            调仓间隔，默认 24h。
+            Rebalance interval, default 24h.
         min_trade_usdt : float
-            单笔最小交易金额。
+            Minimum trade size per order.
         max_position_pct : float
-            单币种最大仓位占比。
+            Maximum position size as a fraction of equity, per coin.
         model_path : str or None
-            LightGBM 模型路径。None 使用动量策略。
+            LightGBM model path. None uses the momentum strategy.
         """
         self.broker = broker
         self.coins = coins
@@ -75,7 +75,7 @@ class StrategyRunner:
         self.positions: Dict[str, float] = {}
         self.last_rebalance: Optional[datetime] = None
 
-        # 加载模型（如果提供）
+        # Load the model (if provided)
         self.predictor = None
         if model_path:
             from .model_predictor import ModelPredictor
@@ -83,38 +83,38 @@ class StrategyRunner:
 
     def compute_signals(self) -> pd.DataFrame:
         """
-        计算信号（模型 > 动量）。
+        Compute signals (model takes priority over momentum).
 
-        如果加载了 LightGBM 模型，使用模型预测；
-        否则使用简单动量因子排名。
+        If a LightGBM model is loaded, use its predictions;
+        otherwise use a simple momentum factor ranking.
 
         Returns
         -------
         pd.DataFrame
             columns: coin, price, score, rank
         """
-        # 优先使用模型
+        # Prefer the model if available
         if self.predictor is not None:
             return self.predictor.predict(self.broker, self.coins, self.lookback_days)
         rows = []
-        print(f"[runner] 获取 {len(self.symbols)} 个币种行情数据...")
+        print(f"[runner] Fetching market data for {len(self.symbols)} coins...")
         for sym, coin in zip(self.symbols, self.coins):
             try:
                 df = self.broker.fetch_ohlcv(sym, "1d", limit=self.lookback_days + 5)
                 if len(df) < self.lookback_days:
-                    print(f"  {coin}: 数据不足 ({len(df)} 天)")
+                    print(f"  {coin}: insufficient data ({len(df)} days)")
                     continue
 
                 close = df["close"]
-                # 动量 = 近期收益率（多周期加权）
+                # Momentum = recent returns (weighted across periods)
                 momentum_7d = close.iloc[-1] / close.iloc[-7] - 1 if len(close) >= 7 else 0
                 momentum_14d = close.iloc[-1] / close.iloc[-14] - 1 if len(close) >= 14 else 0
                 momentum_30d = close.iloc[-1] / close.iloc[-30] - 1 if len(close) >= 30 else 0
-                # 波动率调整
+                # Volatility adjustment
                 vol = close.pct_change().tail(30).std()
 
                 score = 0.4 * momentum_7d + 0.35 * momentum_14d + 0.25 * momentum_30d
-                # 波动率惩罚
+                # Volatility penalty
                 if vol and vol > 0:
                     score = score / (vol * np.sqrt(365))
 
@@ -127,7 +127,7 @@ class StrategyRunner:
                     "score": score,
                 })
             except Exception as e:
-                print(f"  {coin}: 获取失败 - {e}")
+                print(f"  {coin}: fetch failed - {e}")
 
         df = pd.DataFrame(rows)
         if not df.empty:
@@ -137,23 +137,23 @@ class StrategyRunner:
 
     def run_once(self, dry_run: bool = True) -> Dict:
         """
-        执行一次调仓。
+        Execute a single rebalance.
 
         Parameters
         ----------
         dry_run : bool
-            True = 只分析不交易，False = 实际下单。
+            True = analyze only without trading, False = place real orders.
 
         Returns
         -------
         dict
-            调仓结果摘要。
+            Summary of the rebalance result.
         """
         print(f"\n{'='*50}")
-        print(f"🔄 调仓检查 — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"🔄 Rebalance check — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'='*50}")
 
-        # 1. 获取当前持仓 + 计算总资产
+        # 1. Get current holdings + compute total equity
         balances = self.broker.get_balances()
         usdt_balance = balances.get("USDT", 0.0)
         current_holdings = {
@@ -162,7 +162,7 @@ class StrategyRunner:
             if c in balances
         }
 
-        # 获取所有持仓币种的价格，计算总资产
+        # Get prices for all held coins, compute total equity
         holding_coins = [c for c, a in current_holdings.items() if a > 0]
         prices = {}
         if holding_coins:
@@ -170,8 +170,8 @@ class StrategyRunner:
             prices = self.broker.get_current_prices(symbols)
 
         holdings_value = 0.0
-        print(f"\n💰 USDT 余额: {usdt_balance:.2f}")
-        print(f"📦 当前持仓: {len(holding_coins)} 个币种")
+        print(f"\n💰 USDT balance: {usdt_balance:.2f}")
+        print(f"📦 Current holdings: {len(holding_coins)} coins")
         for coin, amt in current_holdings.items():
             if amt > 0:
                 price = prices.get(f"{coin}/USDT", 0)
@@ -180,19 +180,19 @@ class StrategyRunner:
                 print(f"  {coin}: {amt:.4f} (≈${val:.2f})")
 
         total_equity = usdt_balance + holdings_value
-        print(f"💎 总资产: ${total_equity:,.2f}")
+        print(f"💎 Total equity: ${total_equity:,.2f}")
 
-        # 2. 计算动量排名
+        # 2. Compute momentum ranking
         signals = self.compute_signals()
         if signals.empty:
             return {"status": "no_data"}
 
-        print(f"\n📊 动量排名 (Top {self.topk}):")
+        print(f"\n📊 Momentum ranking (Top {self.topk}):")
         for _, row in signals.head(self.topk).iterrows():
             print(f"  {row['rank']:.0f}. {row['coin']:8s}  "
                   f"score={row['score']:.4f}  price=\${row['price']:.4f}")
 
-        # 3. 决定买卖（排除 dust：市值低于最小交易额的仓位视为未持有）
+        # 3. Decide buys/sells (exclude dust: positions worth less than the min trade size are treated as not held)
         target_coins = set(signals.head(self.topk)["coin"])
         current_coins = {
             c for c, amt in current_holdings.items()
@@ -202,44 +202,44 @@ class StrategyRunner:
         to_buy = target_coins - current_coins
         to_sell = current_coins - target_coins
 
-        print(f"\n📋 调仓计划:")
-        print(f"  目标持仓: {target_coins}")
-        print(f"  买入: {to_buy if to_buy else '无'}")
-        print(f"  卖出: {to_sell if to_sell else '无'}")
+        print(f"\n📋 Rebalance plan:")
+        print(f"  Target holdings: {target_coins}")
+        print(f"  Buy: {to_buy if to_buy else 'none'}")
+        print(f"  Sell: {to_sell if to_sell else 'none'}")
 
         trades = []
         if dry_run:
-            print(f"\n⚠ DRY RUN — 仅分析，不实际下单")
+            print(f"\n⚠ DRY RUN — analysis only, no orders placed")
         else:
-            # 卖出（跳过 dust）
+            # Sell (skip dust)
             for coin in to_sell:
                 if coin in current_holdings:
                     amt = current_holdings[coin]
                     sym = f"{coin}/USDT"
                     price = prices.get(sym, 0)
-                    # 检查是否达到最小交易量
+                    # Check whether the minimum trade notional is met
                     min_notional = _get_min_notional(self.broker.exchange, sym)
                     if amt * price < min_notional:
-                        print(f"[runner] ⏭ 跳过卖出 {coin} {amt:.6f} (≈${amt*price:.2f}，低于最小 ${min_notional})")
+                        print(f"[runner] ⏭ Skipping sell of {coin} {amt:.6f} (≈${amt*price:.2f}, below minimum ${min_notional})")
                         continue
                     result = self.broker.market_sell(sym, amt)
                     if result:
                         trades.append(("SELL", coin, amt))
 
-            # 刷新余额（卖出后 USDT 增加）
+            # Refresh balance (USDT increases after selling)
             time.sleep(1)
             new_balances = self.broker.get_balances()
             updated_usdt = new_balances.get("USDT", usdt_balance)
 
-            # 买入：基于总资产计算仓位
+            # Buy: size positions based on total equity
             if to_buy:
                 n_buy = len(to_buy)
-                n_total = len(target_coins)  # 总持仓数
+                n_total = len(target_coins)  # total number of holdings
                 if n_total > 0:
                     budget_per_coin = (total_equity * 0.95) / n_total
                 else:
                     budget_per_coin = (updated_usdt * 0.95) / n_buy
-                # 限制单币种不超过 max_position_pct
+                # Cap each coin at max_position_pct
                 budget_per_coin = min(budget_per_coin, total_equity * self.max_position_pct)
 
                 for coin in to_buy:
@@ -262,20 +262,20 @@ class StrategyRunner:
 
     def run_loop(self, dry_run: bool = True):
         """
-        持续运行调仓循环。
+        Run the rebalance loop continuously.
 
         Parameters
         ----------
         dry_run : bool
-            True = 模拟运行，不下单。
+            True = simulate only, no orders placed.
         """
-        print(f"\n🚀 自动交易系统启动")
-        print(f"   环境: MAINNET")
-        print(f"   模式: {'DRY RUN (观察)' if dry_run else '⚠ LIVE (实盘交易)'}")
-        print(f"   币种: {len(self.coins)} 个")
-        print(f"   持仓数: {self.topk}")
-        print(f"   调仓间隔: {self.rebalance_interval_hours}h")
-        print(f"   按 Ctrl+C 停止\n")
+        print(f"\n🚀 Automated trading system starting")
+        print(f"   Environment: MAINNET")
+        print(f"   Mode: {'DRY RUN (observe)' if dry_run else '⚠ LIVE (real trading)'}")
+        print(f"   Coins: {len(self.coins)}")
+        print(f"   Positions held: {self.topk}")
+        print(f"   Rebalance interval: {self.rebalance_interval_hours}h")
+        print(f"   Press Ctrl+C to stop\n")
 
         while True:
             try:
@@ -283,22 +283,22 @@ class StrategyRunner:
                 if result["status"] == "ok":
                     pass
             except Exception as e:
-                print(f"[runner] ❌ 调仓异常: {e}")
+                print(f"[runner] ❌ Rebalance error: {e}")
 
-            # 等待下次调仓
+            # Wait for the next rebalance
             next_run = datetime.now() + timedelta(hours=self.rebalance_interval_hours)
-            print(f"\n⏰ 下次调仓: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
-            print(f"   等待 {self.rebalance_interval_hours}h...\n")
+            print(f"\n⏰ Next rebalance: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"   Waiting {self.rebalance_interval_hours}h...\n")
             time.sleep(self.rebalance_interval_hours * 3600)
 
 
 def _get_min_notional(exchange, symbol: str) -> float:
-    """获取交易对的最小名义价值"""
+    """Get the minimum notional value for a trading pair"""
     try:
         market = exchange.market(symbol)
         min_notional = market.get("limits", {}).get("cost", {}).get("min", 0)
         if min_notional is None:
-            min_notional = 10.0  # Binance 默认 $10
+            min_notional = 10.0  # Binance default $10
         return float(min_notional)
     except Exception:
         return 10.0

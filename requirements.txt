@@ -1,4 +1,4 @@
-# Docker 交易服务器依赖
+# Docker trading server dependencies
 ccxt
 pandas
 numpy

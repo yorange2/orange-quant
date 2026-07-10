@@ -1,10 +1,10 @@
 """
-完整实验流程
+Full experiment pipeline
 
-编排 qlib 的完整量化实验：
-  数据加载 → 模型训练 → 信号生成 → 信号分析（IC）→ 回测 → 绩效分析
+Orchestrates the complete qlib quantitative experiment:
+  data loading -> model training -> signal generation -> signal analysis (IC) -> backtest -> performance analysis
 
-使用 qlib 的 QlibRecorder (R) 管理实验记录。
+Uses qlib's QlibRecorder (R) to manage experiment records.
 """
 
 import sys
@@ -25,7 +25,7 @@ from qlib.utils import init_instance_by_config
 
 from qlib.contrib.data.handler import Alpha158
 from qlib.contrib.model.gbdt import LGBModel
-# 已知的 qlib PyTorch 模型 module 路径
+# Known qlib PyTorch model module paths
 KNOWN_DL_MODULES = {
     "LSTM": "qlib.contrib.model.pytorch_lstm_ts",
     "GRU": "qlib.contrib.model.pytorch_gru_ts",
@@ -48,18 +48,19 @@ KNOWN_DL_MODULES = {
 
 class QuantExperiment:
     """
-    量化实验管理器。
+    Quantitative experiment manager.
 
-    一键运行完整实验流程，自动记录模型参数、预测信号、IC 分析、回测结果。
-    模型和策略均使用 biance_lgb_momtopk 自己的类（通过 YAML 配置驱动）。
+    Runs the full experiment pipeline in one call, automatically recording model
+    parameters, predicted signals, IC analysis, and backtest results.
+    Both the model and strategy use biance_lgb_momtopk's own classes (driven by YAML config).
 
-    使用方式：
+    Usage:
 
-        # 方式一：从 YAML 配置加载
+        # Option 1: load from a YAML config
         experiment = QuantExperiment.from_yaml("config/csi300-lgb-momtopk.yaml")
         experiment.run()
 
-        # 方式二：编程式构建
+        # Option 2: build programmatically
         experiment = QuantExperiment(
             provider_uri="data/qlib_data/cn_data",
             instruments="csi300",
@@ -92,23 +93,23 @@ class QuantExperiment:
         Parameters
         ----------
         provider_uri : str
-            qlib 数据路径。
+            qlib data path.
         region : str
-            市场区域。
+            Market region.
         instruments : str
-            股票池，如 "csi300"、"csi500"、"all"。
+            Stock universe, e.g. "csi300", "csi500", "all".
         train_start / train_end : str
-            训练集时间范围。
+            Training set time range.
         valid_start / valid_end : str
-            验证集时间范围。
+            Validation set time range.
         test_start / test_end : str
-            测试集（回测）时间范围。
+            Test (backtest) set time range.
         model_params : dict
-            LightGBM 超参数，覆盖默认值。
+            LightGBM hyperparameters, overriding the defaults.
         strategy_config : dict
-            策略完整配置（含 class, module_path, kwargs），用于 PortAnaRecord。
+            Full strategy config (including class, module_path, kwargs), used for PortAnaRecord.
         backtest_params : dict
-            回测参数，覆盖默认值。
+            Backtest parameters, overriding the defaults.
         """
         self.provider_uri = str(Path(provider_uri).expanduser())
         self.region = region
@@ -127,12 +128,12 @@ class QuantExperiment:
     @classmethod
     def from_yaml(cls, config_path: str) -> "QuantExperiment":
         """
-        从 YAML 配置文件创建实验。
+        Create an experiment from a YAML config file.
 
         Parameters
         ----------
         config_path : str
-            YAML 配置文件路径。
+            Path to the YAML config file.
         """
         with open(config_path, "r") as f:
             config = yaml.safe_load(f)
@@ -157,29 +158,29 @@ class QuantExperiment:
             test_start=test_config.get("start", "2017-01-01"),
             test_end=test_config.get("end", "2020-08-01"),
             model_params=model_cfg.get("kwargs", {}),
-            strategy_config=strategy_cfg,  # 完整的策略配置（含 class, module_path, kwargs）
+            strategy_config=strategy_cfg,  # Full strategy config (including class, module_path, kwargs)
             backtest_params=backtest_cfg,
         )
 
     def run(self) -> dict:
         """
-        执行完整实验流程。
+        Execute the full experiment pipeline.
 
         Returns
         -------
         dict
-            包含 model, predictions, ic_analysis, backtest_results 的字典。
+            Dictionary containing model, predictions, ic_analysis, backtest_results.
         """
         print("\n" + "=" * 60)
-        print("🚀 Orange Quant 实验开始")
+        print("🚀 Orange Quant experiment starting")
         print("=" * 60 + "\n")
 
-        # ── Step 1: 初始化 qlib ──
-        print(f"[biance_lgb_momtopk] 初始化 qlib, 数据路径: {self.provider_uri}")
+        # -- Step 1: initialize qlib --
+        print(f"[biance_lgb_momtopk] Initializing qlib, data path: {self.provider_uri}")
         qlib.init(provider_uri=self.provider_uri, region=self.region)
 
-        # ── Step 2: 构建数据集 ──
-        print(f"[biance_lgb_momtopk] 加载数据: {self.instruments}")
+        # -- Step 2: build dataset --
+        print(f"[biance_lgb_momtopk] Loading data: {self.instruments}")
         handler = Alpha158(
             instruments=self.instruments,
             start_time=self.train_start,
@@ -196,21 +197,21 @@ class QuantExperiment:
                 "test": (self.test_start, self.test_end),
             },
         )
-        print(f"[biance_lgb_momtopk] 数据集构建完成: train={self.train_start}~{self.train_end}, "
+        print(f"[biance_lgb_momtopk] Dataset built: train={self.train_start}~{self.train_end}, "
               f"valid={self.valid_start}~{self.valid_end}, test={self.test_start}~{self.test_end}")
 
-        # ── Step 3: 训练模型 ──
+        # -- Step 3: train model --
         model = LGBModel(**self.model_params)
         model.fit(dataset)
         predictions = model.predict(dataset, segment="test")
 
-        # ── Step 4: 记录实验 ──
-        # 结束数据加载阶段可能启动的 mlflow run，避免嵌套冲突
+        # -- Step 4: record experiment --
+        # End any mlflow run started during the data loading stage to avoid nested-run conflicts
         if mlflow.active_run():
             mlflow.end_run()
 
         with R.start(experiment_name="biance_lgb_momtopk_exp"):
-            recorder = R.get_recorder()  # 立即保存 recorder 引用
+            recorder = R.get_recorder()  # Save the recorder reference immediately
             R.log_params(
                 instruments=self.instruments,
                 train_period=f"{self.train_start}_{self.train_end}",
@@ -218,15 +219,15 @@ class QuantExperiment:
                 **self.model_params,
             )
 
-            # 信号记录
+            # Signal record
             sr = SignalRecord(model, dataset, recorder)
             sr.generate()
 
-            # 信号分析（IC、Rank IC、Long-Short 收益）
+            # Signal analysis (IC, Rank IC, Long-Short returns)
             sar = SigAnaRecord(recorder)
             sar.generate()
 
-            # 回测 — 使用 biance_lgb_momtopk 策略配置
+            # Backtest -- uses biance_lgb_momtopk strategy config
             port_analysis_config = {
                 "executor": {
                     "class": "SimulatorExecutor",
@@ -239,7 +240,7 @@ class QuantExperiment:
                 "backtest": {
                     "start_time": self.test_start,
                     "end_time": self.test_end,
-                    "account": 100000000,  # 初始资金 1亿
+                    "account": 100000000,  # Initial capital: 100 million
                     "benchmark": self.backtest_params.get("benchmark", "SH000300"),
                     "exchange_kwargs": self.backtest_params.get("exchange_kwargs", {
                         "freq": "day",
@@ -261,7 +262,7 @@ class QuantExperiment:
             par.generate()
 
         print("\n" + "=" * 60)
-        print("✅ 实验完成！使用 `R.get_recorder()` 查看结果。")
+        print("✅ Experiment complete! Use `R.get_recorder()` to view results.")
         print("=" * 60 + "\n")
 
         return {
@@ -273,46 +274,46 @@ class QuantExperiment:
 
 def run_from_yaml(config_path: str = "config/csi300-lgb-momtopk.yaml") -> dict:
     """
-    从 YAML 配置运行实验的便捷函数。
+    Convenience function to run an experiment from a YAML config.
 
-    可直接在 notebook 或脚本中调用：
+    Can be called directly from a notebook or script:
         from biance_lgb_momtopk.workflow.experiment import run_from_yaml
         results = run_from_yaml("config/csi300-lgb-momtopk.yaml")
 
-    训练完成后自动将模型导出到 models/{config_name}.pkl。
+    After training completes, the model is automatically exported to models/{config_name}.pkl.
     """
     import pickle
 
     experiment = QuantExperiment.from_yaml(config_path)
     results = experiment.run()
 
-    # 自动导出模型到 models/
+    # Automatically export the model to models/
     model_path = Path("models")
     model_path.mkdir(parents=True, exist_ok=True)
     config_name = Path(config_path).stem  # e.g. "csi300-lgb-momtopk"
     output_path = model_path / f"{config_name}.pkl"
     pickle.dump(results["model"], open(output_path, "wb"))
-    print(f"💾 模型已导出至 {output_path}")
+    print(f"💾 Model exported to {output_path}")
 
     return results
 
 
 def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> dict:
     """
-    从 YAML 配置运行深度学习实验的便捷函数。
+    Convenience function to run a deep learning experiment from a YAML config.
 
-    支持所有 qlib PyTorch 模型：
+    Supports all qlib PyTorch models:
         LSTM, GRU, Transformer, ALSTM, TRA, Localformer,
-        SFM, TCN, KRNN, GATs, HIST, IGMTF, TCTS 等
+        SFM, TCN, KRNN, GATs, HIST, IGMTF, TCTS, etc.
 
-    使用方式：
+    Usage:
         from biance_lgb_momtopk.workflow.experiment import run_dl_from_yaml
         results = run_dl_from_yaml("config/csi300-lstm-momtopk.yaml")
 
     Parameters
     ----------
     config_path : str
-        深度学习实验 YAML 配置文件路径。
+        Path to the deep learning experiment YAML config file.
     """
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
@@ -343,17 +344,17 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
     benchmark = backtest_cfg.get("benchmark", "SH000300")
 
     print("\n" + "=" * 60)
-    print(f"🚀 Orange Quant 深度学习实验 — {model_name}")
+    print(f"🚀 Orange Quant deep learning experiment — {model_name}")
     print("=" * 60 + "\n")
 
-    # ── Step 1: 初始化 qlib ──
-    print(f"[biance_lgb_momtopk] 初始化 qlib, 数据路径: {provider_uri}")
+    # -- Step 1: initialize qlib --
+    print(f"[biance_lgb_momtopk] Initializing qlib, data path: {provider_uri}")
     qlib.init(provider_uri=provider_uri, region=region)
 
-    # ── Step 2: 构建时序数据集 (TSDatasetH) ──
-    print(f"[biance_lgb_momtopk] 加载数据: {instruments}, step_len={step_len}")
+    # -- Step 2: build time-series dataset (TSDatasetH) --
+    print(f"[biance_lgb_momtopk] Loading data: {instruments}, step_len={step_len}")
 
-    # DL 模型使用 TSDatasetH + 特殊预处理
+    # DL models use TSDatasetH + special preprocessing
     from qlib.contrib.data.handler import Alpha158
     from qlib.data.dataset import TSDatasetH
 
@@ -395,26 +396,26 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
         },
         step_len=step_len,
     )
-    print(f"[biance_lgb_momtopk] TSDatasetH 构建完成, step_len={step_len}")
+    print(f"[biance_lgb_momtopk] TSDatasetH built, step_len={step_len}")
 
-    # ── Step 3: 训练模型 ──
+    # -- Step 3: train model --
     module_path = KNOWN_DL_MODULES.get(model_name)
     if module_path is None:
         raise ValueError(
-            f"未知模型 '{model_name}'。已知模型: {list(KNOWN_DL_MODULES.keys())}"
+            f"Unknown model '{model_name}'. Known models: {list(KNOWN_DL_MODULES.keys())}"
         )
     import importlib
     module = importlib.import_module(module_path)
     model_cls = getattr(module, model_name)
     model = model_cls(**model_kwargs)
 
-    print(f"[biance_lgb_momtopk] 开始训练 {model_name} 模型...")
+    print(f"[biance_lgb_momtopk] Starting training of {model_name} model...")
     model.fit(dataset)
-    print(f"[biance_lgb_momtopk] {model_name} 训练完成！")
+    print(f"[biance_lgb_momtopk] {model_name} training complete!")
 
     predictions = model.predict(dataset, segment="test")
 
-    # ── Step 4: 记录实验 ──
+    # -- Step 4: record experiment --
     if mlflow.active_run():
         mlflow.end_run()
 
@@ -428,15 +429,15 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
             test_period=f"{test_start}_{test_end}",
             **model_kwargs,
         )
-        # 信号记录
+        # Signal record
         sr = SignalRecord(model, dataset, recorder)
         sr.generate()
 
-        # 信号分析
+        # Signal analysis
         sar = SigAnaRecord(recorder)
         sar.generate()
 
-        # 回测
+        # Backtest
         port_analysis_config = {
             "executor": {
                 "class": "SimulatorExecutor",
@@ -467,7 +468,7 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
         par.generate()
 
     print("\n" + "=" * 60)
-    print(f"✅ {model_name} 实验完成！")
+    print(f"✅ {model_name} experiment complete!")
     print("=" * 60 + "\n")
 
     results = {
@@ -476,13 +477,13 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
         "recorder": recorder,
     }
 
-    # 自动导出模型到 models/
+    # Automatically export the model to models/
     import pickle
     model_dir = Path("models")
     model_dir.mkdir(parents=True, exist_ok=True)
     config_name = Path(config_path).stem  # e.g. "csi300-lstm-momtopk"
     output_path = model_dir / f"{config_name}.pkl"
     pickle.dump(model, open(output_path, "wb"))
-    print(f"💾 模型已导出至 {output_path}")
+    print(f"💾 Model exported to {output_path}")
 
     return results

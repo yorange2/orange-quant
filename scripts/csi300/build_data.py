@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-下载 qlib 中国 A 股日线数据
+Download qlib China A-share daily-bar data
 
-首次运行会下载约 1-2 GB 数据，耗时取决于网络速度。
-数据存放: data/qlib_data/cn_data/
+The first run downloads roughly 1-2 GB of data; time depends on network speed.
+Data location: data/qlib_data/cn_data/
 """
 
 import sys
@@ -18,12 +18,12 @@ def main():
     data_dir = Path(provider_uri)
 
     if data_dir.exists() and any(data_dir.iterdir()):
-        print(f"[csi300] 数据目录已存在: {provider_uri}")
-        print("[csi300] 如需重新下载，请删除该目录后重试。")
+        print(f"[csi300] Data directory already exists: {provider_uri}")
+        print("[csi300] To re-download, delete this directory and try again.")
         return
 
-    print(f"[csi300] 开始下载 A 股日线数据...")
-    print(f"[csi300] 数据将保存到: {provider_uri}")
+    print(f"[csi300] Starting download of A-share daily-bar data...")
+    print(f"[csi300] Data will be saved to: {provider_uri}")
 
     try:
         import qlib
@@ -36,10 +36,10 @@ def main():
             interval="1d",
             delete_old=False,
         )
-        print("[csi300] 数据下载完成！")
+        print("[csi300] Data download complete!")
     except ImportError:
         raise RuntimeError(
-            "无法导入 qlib。请确保已安装: pip install -e /path/to/qlib"
+            "Failed to import qlib. Make sure it's installed: pip install -e /path/to/qlib"
         )
 
 

@@ -1,32 +1,32 @@
 # 🍊 Orange Quant
 
-基于 [Microsoft qlib](https://github.com/microsoft/qlib) 的 AI 量化交易算法框架。
+AI quantitative trading algorithm framework based on [Microsoft qlib](https://github.com/microsoft/qlib).
 
-## 项目结构
+## Project structure
 
 ```
 orange-quant/
-├── biance_lgb_momtopk/               # 核心包
-│   ├── trading/                # 交易层：Binance 自动交易
-│   └── workflow/               # 实验管理：YAML 配置驱动
-├── config/                     # 实验配置文件
+├── biance_lgb_momtopk/               # Core package
+│   ├── trading/                # Trading layer: Binance automated trading
+│   └── workflow/               # Experiment management: YAML config driven
+├── config/                     # Experiment config files
 │   ├── csi300-lgb-momtopk.yaml
 │   └── binance-lgb-momtopk.yaml
-├── scripts/                    # 工具脚本
+├── scripts/                    # Utility scripts
 │   └── csi300/
-│       └── build_data.py       # 下载 A 股数据
+│       └── build_data.py       # Download A-share data
 ├── biance_lgb_momtopk/
 │   ├── data/
-│   │   └── build.py            # 构建 Binance 数据集
-│   ├── server.py               # 交易执行入口
-│   └── train.py                # 训练 LightGBM 模型
+│   │   └── build.py            # Build the Binance dataset
+│   ├── server.py               # Trading execution entry point
+│   └── train.py                # Train the LightGBM model
 ├── Dockerfile
 └── docker-compose.yml
 ```
 
-## 快速开始
+## Quick start
 
-### 1. 安装依赖
+### 1. Install dependencies
 
 ```bash
 python3 -m venv .venv
@@ -36,10 +36,10 @@ pip install lightgbm pandas numpy pyyaml ccxt python-dotenv
 # macOS: brew install libomp
 ```
 
-### 2. 下载数据并运行实验
+### 2. Download data and run an experiment
 
 ```bash
-# A 股
+# A-shares
 python scripts/csi300/build_data.py
 python -c "from biance_lgb_momtopk.workflow.experiment import run_from_yaml; run_from_yaml('config/csi300-lgb-momtopk.yaml')"
 
@@ -48,27 +48,27 @@ python -m biance_lgb_momtopk.data.build --top 50
 python -c "from biance_lgb_momtopk.workflow.experiment import run_from_yaml; run_from_yaml('config/binance-lgb-momtopk.yaml')"
 ```
 
-## 实验结果
+## Experiment results
 
-| 数据集 | 标的 | IC | 超额(含成本) | IR(含成本) |
+| Dataset | Universe | IC | Excess return (net of costs) | IR (net of costs) |
 |--------|------|-----|-------------|-----------|
-| A 股 CSI300 | 820 | 0.027 | 1.0% | 0.11 |
-| Binance 20 蓝筹 | 20 | 0.034 | 17.3% | 0.77 |
+| A-share CSI300 | 820 | 0.027 | 1.0% | 0.11 |
+| Binance top-20 blue chips | 20 | 0.034 | 17.3% | 0.77 |
 
-## 自动交易
+## Automated trading
 
-### 本地
+### Local
 
 ```bash
 source .venv/bin/activate
 
-# DRY RUN（只分析不下单）
+# DRY RUN (analyze only, no orders placed)
 python -m biance_lgb_momtopk.server --once --dry-run --model models/binance-lgb-momtopk.pkl
 
-# 实盘下单
+# Live trading
 python -m biance_lgb_momtopk.server --once --model models/binance-lgb-momtopk.pkl
 
-# 查看持仓
+# View holdings
 python -c "
 from dotenv import load_dotenv; load_dotenv(override=True)
 from biance_lgb_momtopk.trading.broker import BinanceBroker
@@ -79,53 +79,53 @@ for a, amt in sorted(broker.get_balances().items()):
 "
 ```
 
-### Docker 部署
+### Docker deployment
 
 ```bash
-# 准备 .env（Binance API Key）
+# Prepare .env (Binance API key)
 cat > .env << EOF
-BINANCE_API_KEY=你的api_key
-BIANCE_SECRET_KEY=你的secret_key
+BINANCE_API_KEY=your_api_key
+BIANCE_SECRET_KEY=your_secret_key
 EOF
 
-# 下载数据 + 放入模型文件
+# Download data + place the model file
 python -m biance_lgb_momtopk.data.build --top 50
 mkdir -p models
 cp /path/to/binance-lgb-momtopk.pkl models/
 
-# 上传到服务器
-scp -r models data/qlib_data/binance user@服务器:~/orange-quant/
-# 或直接在服务器上运行 build_data 和训练得到模型
+# Upload to the server
+scp -r models data/qlib_data/binance user@server:~/orange-quant/
+# Or run build_data and training directly on the server to produce the model
 
-# 启动
-docker compose --profile live up -d  --build    # 实盘
-docker compose --profile dry-run up -d  --build # 观察（不下单）
-docker compose --profile once up --build        # 手动执行一次（测试用）
-docker logs -f orange-quant             # 日志
-docker compose down                     # 停止
+# Start
+docker compose --profile live up -d  --build    # live trading
+docker compose --profile dry-run up -d  --build # observe only (no orders)
+docker compose --profile once up --build        # run once manually (for testing)
+docker logs -f orange-quant             # logs
+docker compose down                     # stop
 ```
 
-### 升级
+### Upgrading
 
 ```bash
 git pull
-docker compose up -d --build    # 重新构建并替换旧容器
+docker compose up -d --build    # rebuild and replace the old container
 ```
 
-### 参数说明
+### Parameters
 
-| 参数 | 默认值 | 说明 |
+| Parameter | Default | Description |
 |------|--------|------|
-| `--hour` | 0 | 调仓时间 (UTC 小时) |
-| `--minute` | 15 | 调仓时间 (分钟) |
-| `--topk` | 5 | 持仓数量 |
-| `--lookback` | 160 | 回看天数 |
-| `--model` | models/binance-lgb-momtopk.pkl | LightGBM 模型路径，不指定则用动量策略 |
-| `--dry-run` | — | 只分析不下单 |
-| `--once` | — | 执行一次后退出 |
-| `--testnet` | — | 使用 Binance 测试网 |
-| `--retrain` | — | 调仓前更新数据并重新训练模型 |
+| `--hour` | 0 | Rebalance time (UTC hour) |
+| `--minute` | 15 | Rebalance time (minute) |
+| `--topk` | 5 | Number of positions to hold |
+| `--lookback` | 160 | Lookback window in days |
+| `--model` | models/binance-lgb-momtopk.pkl | LightGBM model path; falls back to the momentum strategy if not specified |
+| `--dry-run` | — | Analyze only, no orders placed |
+| `--once` | — | Run once then exit |
+| `--testnet` | — | Use the Binance testnet |
+| `--retrain` | — | Refresh data and retrain the model before rebalancing |
 
-## 许可
+## License
 
 MIT

@@ -1,8 +1,8 @@
 """
-自动交易策略执行器
+Automated trading strategy runner
 
-加载训练好的 LightGBM 模型，每日获取行情数据，
-生成预测信号，执行调仓操作。
+Loads a trained LightGBM model, fetches market data daily,
+generates predicted signals, and executes rebalancing.
 """
 
 import time
@@ -18,16 +18,16 @@ from .broker import HyperliquidBroker, PaperBroker
 
 class StrategyRunner:
     """
-    自动交易策略执行器。
+    Automated trading strategy runner.
 
-    使用方式：
+    Usage:
 
         runner = StrategyRunner(
             broker=broker,
             coins=["BTC", "ETH", "SOL"],
             topk=5,
         )
-        runner.run_once()   # 单次调仓
+        runner.run_once()   # single rebalance
     """
 
     def __init__(
@@ -59,17 +59,17 @@ class StrategyRunner:
             self.predictor = ModelPredictor(model_path)
 
     def compute_signals(self) -> pd.DataFrame:
-        """计算信号（模型 > 动量）"""
+        """Compute signals (model takes priority over momentum)"""
         if self.predictor is not None:
             return self.predictor.predict(self.broker, self.coins, self.lookback_days)
 
         rows = []
-        print(f"[runner] 获取 {len(self.coins)} 个币种行情数据...")
+        print(f"[runner] Fetching market data for {len(self.coins)} coins...")
         for coin in self.coins:
             try:
                 df = self.broker.fetch_ohlcv(coin, "1d", limit=self.lookback_days + 5)
                 if len(df) < self.lookback_days:
-                    print(f"  {coin}: 数据不足 ({len(df)} 天)")
+                    print(f"  {coin}: insufficient data ({len(df)} days)")
                     continue
 
                 close = df["close"]
@@ -90,7 +90,7 @@ class StrategyRunner:
                     "score": score,
                 })
             except Exception as e:
-                print(f"  {coin}: 获取失败 - {e}")
+                print(f"  {coin}: fetch failed - {e}")
 
         df = pd.DataFrame(rows)
         if not df.empty:
@@ -99,12 +99,12 @@ class StrategyRunner:
         return df
 
     def run_once(self, dry_run: bool = True) -> Dict:
-        """执行一次调仓"""
+        """Execute a single rebalance"""
         print(f"\n{'='*50}")
-        print(f"🔄 调仓检查 — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"🔄 Rebalance check — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'='*50}")
 
-        # 获取当前持仓
+        # Get current holdings
         balances = self.broker.get_balances()
         usdc_balance = balances.get("USDC", 0.0)
         current_holdings = {
@@ -119,8 +119,8 @@ class StrategyRunner:
             prices = self.broker.get_current_prices(holding_coins)
 
         holdings_value = 0.0
-        print(f"\n💰 USDC 余额: {usdc_balance:.2f}")
-        print(f"📦 当前持仓: {len(holding_coins)} 个币种")
+        print(f"\n💰 USDC balance: {usdc_balance:.2f}")
+        print(f"📦 Current holdings: {len(holding_coins)} coins")
         for coin, amt in current_holdings.items():
             if amt > 0:
                 price = prices.get(coin, 0)
@@ -129,19 +129,19 @@ class StrategyRunner:
                 print(f"  {coin}: {amt:.4f} (≈${val:.2f})")
 
         total_equity = usdc_balance + holdings_value
-        print(f"💎 总资产: ${total_equity:,.2f}")
+        print(f"💎 Total equity: ${total_equity:,.2f}")
 
-        # 计算排名
+        # Compute ranking
         signals = self.compute_signals()
         if signals.empty:
             return {"status": "no_data"}
 
-        print(f"\n📊 动量排名 (Top {self.topk}):")
+        print(f"\n📊 Momentum ranking (Top {self.topk}):")
         for _, row in signals.head(self.topk).iterrows():
             print(f"  {row['rank']:.0f}. {row['coin']:8s}  "
                   f"score={row['score']:.4f}  price=\${row['price']:.4f}")
 
-        # 决定买卖
+        # Decide buys/sells
         target_coins = set(signals.head(self.topk)["coin"])
         current_coins = {
             c for c, amt in current_holdings.items()
@@ -151,14 +151,14 @@ class StrategyRunner:
         to_buy = target_coins - current_coins
         to_sell = current_coins - target_coins
 
-        print(f"\n📋 调仓计划:")
-        print(f"  目标持仓: {target_coins}")
-        print(f"  买入: {to_buy if to_buy else '无'}")
-        print(f"  卖出: {to_sell if to_sell else '无'}")
+        print(f"\n📋 Rebalance plan:")
+        print(f"  Target holdings: {target_coins}")
+        print(f"  Buy: {to_buy if to_buy else 'none'}")
+        print(f"  Sell: {to_sell if to_sell else 'none'}")
 
         trades = []
         if dry_run:
-            print(f"\n⚠ DRY RUN — 仅分析，不实际下单")
+            print(f"\n⚠ DRY RUN — analysis only, no orders placed")
         else:
             for coin in to_sell:
                 if coin in current_holdings:
@@ -198,22 +198,22 @@ class StrategyRunner:
         }
 
     def run_loop(self, dry_run: bool = True):
-        """持续运行调仓循环"""
-        print(f"\n🚀 自动交易系统启动")
-        print(f"   环境: MAINNET")
-        print(f"   模式: {'DRY RUN (观察)' if dry_run else '⚠ LIVE (实盘交易)'}")
-        print(f"   币种: {len(self.coins)} 个")
-        print(f"   持仓数: {self.topk}")
-        print(f"   调仓间隔: {self.rebalance_interval_hours}h")
-        print(f"   按 Ctrl+C 停止\n")
+        """Run the rebalance loop continuously"""
+        print(f"\n🚀 Automated trading system starting")
+        print(f"   Environment: MAINNET")
+        print(f"   Mode: {'DRY RUN (observe)' if dry_run else '⚠ LIVE (real trading)'}")
+        print(f"   Coins: {len(self.coins)}")
+        print(f"   Positions held: {self.topk}")
+        print(f"   Rebalance interval: {self.rebalance_interval_hours}h")
+        print(f"   Press Ctrl+C to stop\n")
 
         while True:
             try:
                 self.run_once(dry_run=dry_run)
             except Exception as e:
-                print(f"[runner] ❌ 调仓异常: {e}")
+                print(f"[runner] ❌ Rebalance error: {e}")
 
             next_run = datetime.now() + timedelta(hours=self.rebalance_interval_hours)
-            print(f"\n⏰ 下次调仓: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
-            print(f"   等待 {self.rebalance_interval_hours}h...\n")
+            print(f"\n⏰ Next rebalance: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"   Waiting {self.rebalance_interval_hours}h...\n")
             time.sleep(self.rebalance_interval_hours * 3600)

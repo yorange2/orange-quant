@@ -8,13 +8,13 @@ services:
     env_file:
       - .env
 
-    # 挂载模型和数据（需先在服务器上下载好）
+    # Mount models and data (must be downloaded on the server beforehand)
     volumes:
       - ./models:/app/models
       - ./data:/app/data
 
-    # 默认每日 00:15 UTC 调仓（北京时间 08:15）
-    # 使用 LightGBM 模型预测，如不需要可删除 --model 参数（退化为动量策略）
+    # Rebalance daily at 00:15 UTC (08:15 Beijing time) by default
+    # Uses LightGBM model predictions; remove --model if not needed (falls back to the momentum strategy)
     command: ["--retrain", "--hour", "0", "--minute", "11", "--model", "models/binance-lgb-momtopk.pkl"]
 
     profiles:
@@ -26,7 +26,7 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # DRY RUN 模式（观察用，不下单）
+  # DRY RUN mode (observation only, no orders placed)
   orange-quant-dry:
     build: .
     image: orange-quant:latest
@@ -46,7 +46,7 @@ services:
     profiles:
       - dry-run
 
-  # 手动执行一次（测试/部署验证用）
+  # Run once manually (for testing/deployment verification)
   orange-quant-once:
     build: .
     image: orange-quant:latest

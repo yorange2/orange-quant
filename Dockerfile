@@ -6,28 +6,28 @@ ENV MLFLOW_ALLOW_FILE_STORE=true
 
 WORKDIR /app
 
-# LightGBM 需要 libgomp1
+# LightGBM requires libgomp1
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     git \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装依赖
+# Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 复制项目代码
+# Copy project code
 COPY biance_lgb_momtopk/ ./biance_lgb_momtopk/
 COPY config/ ./config/
 
-# 初始化空 git 仓库，消除 qlib recorder 的 git diff 警告
+# Initialize an empty git repo to silence the qlib recorder's git diff warning
 RUN git init && git config user.email "docker@orange-quant" && git config user.name "Docker"
 
-# 健康检查
+# Health check
 HEALTHCHECK --interval=6h --timeout=30s --retries=3 \
     CMD python -c "import ccxt; ccxt.binance().load_markets()" || exit 1
 
-# 每日 UTC 00:15 调仓
+# Rebalance daily at 00:15 UTC
 ENTRYPOINT ["python", "-m", "biance_lgb_momtopk.server"]
 CMD ["--hour", "0", "--minute", "15"]

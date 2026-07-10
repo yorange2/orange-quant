@@ -1,8 +1,8 @@
 """
-LightGBM 模型预测器
+LightGBM model predictor
 
-加载训练好的 qlib LGBModel，使用 qlib Alpha158 特征引擎，
-从 Hyperliquid OHLCV 数据生成预测排名。
+Loads a trained qlib LGBModel, uses the qlib Alpha158 feature engine,
+and generates predicted rankings from Hyperliquid OHLCV data.
 """
 
 import pickle
@@ -18,7 +18,7 @@ from .broker import HyperliquidBroker, PaperBroker
 
 class ModelPredictor:
     """
-    LightGBM 模型预测器。
+    LightGBM model predictor.
     """
 
     def __init__(self, model_path: str):
@@ -29,7 +29,7 @@ class ModelPredictor:
     def _load_model(self):
         with open(self.model_path, "rb") as f:
             self.model = pickle.load(f)
-        print(f"[predictor] ✅ 模型已加载: {self.model_path.name}")
+        print(f"[predictor] ✅ Model loaded: {self.model_path.name}")
 
     def predict(
         self,
@@ -38,15 +38,15 @@ class ModelPredictor:
         lookback_days: int = 160,
     ) -> pd.DataFrame:
         """
-        使用模型预测，返回币种排名。
+        Predict using the model, returning a coin ranking.
 
         Parameters
         ----------
         broker : HyperliquidBroker or PaperBroker
         coins : list[str]
-            币种列表（如 ["BTC", "ETH"]）。
+            Coin list (e.g. ["BTC", "ETH"]).
         lookback_days : int
-            回看天数。
+            Lookback window in days.
 
         Returns
         -------
@@ -54,9 +54,9 @@ class ModelPredictor:
             columns: coin, score, rank
         """
         if self.model is None:
-            raise RuntimeError("模型未加载")
+            raise RuntimeError("Model not loaded")
 
-        print(f"[predictor] 获取 {len(coins)} 个币种 {lookback_days} 天数据...")
+        print(f"[predictor] Fetching {lookback_days} days of data for {len(coins)} coins...")
         records = []
         latest_prices = {}
         for coin in coins:
@@ -72,13 +72,13 @@ class ModelPredictor:
                 print(f"  {coin}: {e}")
 
         if len(records) < 3:
-            print("[predictor] ⚠ 有效数据不足")
+            print("[predictor] ⚠ Not enough valid data")
             return pd.DataFrame()
 
         raw_df = pd.concat(records, ignore_index=True)
         raw_df = raw_df.rename(columns={"datetime": "date"})
 
-        print(f"[predictor] 计算 Alpha158 + 模型预测...")
+        print(f"[predictor] Computing Alpha158 + model predictions...")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             dataset, latest_date = self._create_dataset(raw_df, coins)
@@ -100,7 +100,7 @@ class ModelPredictor:
         return result
 
     def _create_dataset(self, raw_df, coins):
-        """用 qlib Alpha158 handler 构建 DatasetH"""
+        """Build a DatasetH using the qlib Alpha158 handler"""
         import qlib
         from qlib.data.dataset import DatasetH
         from qlib.contrib.data.handler import Alpha158
