@@ -148,7 +148,8 @@ def _rebuild_qlib():
     print(f"  Building features ({len(sorted_dates)} days in the calendar)...")
     for coin in coins:
         df = pd.read_csv(RAW_DIR / f"{coin}.csv").set_index("date").sort_index()
-        coin_dir = features_dir / coin
+        # qlib reads features/{instrument.lower()}/, so the dir must be lowercase
+        coin_dir = features_dir / coin.lower()
         coin_dir.mkdir(parents=True, exist_ok=True)
         start_idx = date_to_idx.get(df.index[0], 0)
         for field in ["open", "close", "high", "low", "volume", "factor"]:
@@ -160,8 +161,8 @@ def _rebuild_qlib():
     print("  Generating VWAP proxy field (vwap=close)...")
     if features_dir.exists():
         for coin in coins:
-            close_bin = features_dir / coin / "close.day.bin"
-            vwap_bin = features_dir / coin / "vwap.day.bin"
+            close_bin = features_dir / coin.lower() / "close.day.bin"
+            vwap_bin = features_dir / coin.lower() / "vwap.day.bin"
             if close_bin.exists() and not vwap_bin.exists():
                 data = np.fromfile(close_bin, dtype="<f")
                 data.tofile(str(vwap_bin))
