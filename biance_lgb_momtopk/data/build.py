@@ -46,6 +46,7 @@ _SKIP = {
     "USDCUSDT", "USDTUSDT", "TUSDUSDT", "BUSDUSDT", "DAIUSDT",
     "PAXUSDT", "USD1USDT", "FDUSDUSDT", "RLUSDUSDT", "EURUSDT",
     "XAUTUSDT", "PAXGUSDT",
+    "UUSDT",  # trade-restricted on Binance (reduce-only), orders get rejected
 }
 
 _REQUEST_DELAY = 0.3
