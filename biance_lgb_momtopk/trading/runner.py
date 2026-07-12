@@ -41,6 +41,7 @@ class StrategyRunner:
         rebalance_interval_hours: int = 24,
         min_trade_usdt: float = 15.0,
         max_position_pct: float = 0.25,
+        risk_degree: float = 0.95,
         model_path: Optional[str] = None,
     ):
         """
@@ -59,6 +60,9 @@ class StrategyRunner:
             Minimum trade size per order.
         max_position_pct : float
             Maximum position size as a fraction of equity, per coin.
+        risk_degree : float
+            Fraction of total equity to deploy (rest stays in USDT),
+            mirroring the backtest strategy's risk_degree.
         model_path : str or None
             LightGBM model path. None uses the momentum strategy.
         """
@@ -70,6 +74,7 @@ class StrategyRunner:
         self.rebalance_interval_hours = rebalance_interval_hours
         self.min_trade_usdt = min_trade_usdt
         self.max_position_pct = max_position_pct
+        self.risk_degree = risk_degree
         self.model_path = model_path
 
         self.positions: Dict[str, float] = {}
@@ -190,7 +195,7 @@ class StrategyRunner:
         print(f"\n📊 Momentum ranking (Top {self.topk}):")
         for _, row in signals.head(self.topk).iterrows():
             print(f"  {row['rank']:.0f}. {row['coin']:8s}  "
-                  f"score={row['score']:.4f}  price=\${row['price']:.4f}")
+                  f"score={row['score']:.4f}  price=${row['price']:.4f}")
 
         # 3. Decide buys/sells (exclude dust: positions worth less than the min trade size are treated as not held)
         target_coins = set(signals.head(self.topk)["coin"])
@@ -226,6 +231,26 @@ class StrategyRunner:
                     if result:
                         trades.append(("SELL", coin, amt))
 
+            # Target per-coin budget: deploy risk_degree of equity, equal-weighted
+            budget_per_coin = (total_equity * self.risk_degree) / max(len(target_coins), 1)
+            # Cap each coin at max_position_pct
+            budget_per_coin = min(budget_per_coin, total_equity * self.max_position_pct)
+
+            # Trim held target positions that are far above the per-coin budget,
+            # freeing cash so new entrants can actually be bought
+            for coin in sorted(target_coins & current_coins):
+                sym = f"{coin}/USDT"
+                price = prices.get(sym, 0)
+                if price <= 0:
+                    continue
+                val = current_holdings.get(coin, 0) * price
+                excess = val - budget_per_coin
+                min_notional = _get_min_notional(self.broker.exchange, sym)
+                if val > budget_per_coin * 1.3 and excess >= max(self.min_trade_usdt, min_notional):
+                    result = self.broker.market_sell(sym, excess / price)
+                    if result:
+                        trades.append(("TRIM", coin, excess))
+
             # Refresh balance (USDT increases after selling)
             time.sleep(1)
             new_balances = self.broker.get_balances()
@@ -233,15 +258,6 @@ class StrategyRunner:
 
             # Buy: size positions based on total equity
             if to_buy:
-                n_buy = len(to_buy)
-                n_total = len(target_coins)  # total number of holdings
-                if n_total > 0:
-                    budget_per_coin = (total_equity * 0.95) / n_total
-                else:
-                    budget_per_coin = (updated_usdt * 0.95) / n_buy
-                # Cap each coin at max_position_pct
-                budget_per_coin = min(budget_per_coin, total_equity * self.max_position_pct)
-
                 for coin in to_buy:
                     if budget_per_coin > self.min_trade_usdt and updated_usdt >= budget_per_coin:
                         sym = f"{coin}/USDT"

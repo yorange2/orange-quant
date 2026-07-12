@@ -34,6 +34,22 @@ logger = logging.getLogger("orange-quant-hl")
 DEFAULT_TOP_K = 5
 DEFAULT_LOOKBACK = 160
 DEFAULT_MIN_TRADE = 20.0
+DEFAULT_RISK_DEGREE = 0.95
+
+
+def load_strategy_defaults(model_path: str):
+    """Read topk / risk_degree from the yaml config matching the model,
+    so live trading uses the same strategy parameters as the backtest."""
+    try:
+        import yaml
+        cfg_path = Path("config") / f"{Path(model_path).stem}.yaml"
+        if cfg_path.exists():
+            cfg = yaml.safe_load(cfg_path.read_text())
+            kwargs = cfg.get("strategy", {}).get("kwargs", {})
+            return kwargs.get("topk"), kwargs.get("risk_degree")
+    except Exception as e:
+        logger.warning(f"Failed to read strategy config for {model_path}: {e}")
+    return None, None
 
 _shutdown = False
 
@@ -55,7 +71,8 @@ def retrain_model(model_path: str):
     logger.info("✅ Model updated")
 
 
-def run_rebalance(broker, coins, dry_run, topk, lookback, min_trade, model_path=None):
+def run_rebalance(broker, coins, dry_run, topk, lookback, min_trade, model_path=None,
+                  risk_degree=DEFAULT_RISK_DEGREE):
     """Execute a single rebalance"""
     try:
         runner = StrategyRunner(
@@ -64,6 +81,7 @@ def run_rebalance(broker, coins, dry_run, topk, lookback, min_trade, model_path=
             topk=topk,
             lookback_days=lookback,
             min_trade_usdc=min_trade,
+            risk_degree=risk_degree,
             model_path=model_path,
         )
         result = runner.run_once(dry_run=dry_run)
@@ -101,12 +119,20 @@ def main():
     parser.add_argument("--minute", type=int, default=15, help="Daily rebalance time (minute)")
     parser.add_argument("--dry-run", action="store_true", help="Analyze only, no orders placed")
     parser.add_argument("--once", action="store_true", help="Run once then exit")
-    parser.add_argument("--topk", type=int, default=DEFAULT_TOP_K, help="Number of positions to hold")
+    parser.add_argument("--topk", type=int, default=None,
+                        help="Number of positions to hold (default: strategy topk from the model's yaml config)")
+    parser.add_argument("--risk-degree", type=float, default=None,
+                        help="Fraction of equity to deploy (default: risk_degree from the model's yaml config)")
     parser.add_argument("--lookback", type=int, default=DEFAULT_LOOKBACK, help="Lookback window in days")
     parser.add_argument("--min-trade", type=float, default=DEFAULT_MIN_TRADE, help="Minimum trade size in USDC")
     parser.add_argument("--model", type=str, default="models/hyperliquid-lgb-momtopk.pkl", help="LightGBM model path")
     parser.add_argument("--retrain", action="store_true", help="Refresh data and retrain the model before rebalancing")
     args = parser.parse_args()
+
+    # Fill topk / risk_degree from the model's yaml config unless overridden on the CLI
+    yaml_topk, yaml_risk = load_strategy_defaults(args.model) if args.model else (None, None)
+    topk = args.topk if args.topk is not None else (yaml_topk or DEFAULT_TOP_K)
+    risk_degree = args.risk_degree if args.risk_degree is not None else (yaml_risk or DEFAULT_RISK_DEGREE)
 
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
@@ -130,7 +156,7 @@ def main():
     logger.info("=" * 50)
     logger.info(f"🤖 Orange Quant Hyperliquid trading server starting")
     logger.info(f"   Environment: MAINNET | Mode: {mode}")
-    logger.info(f"   Coins: {len(coins)} | TopK: {args.topk}")
+    logger.info(f"   Coins: {len(coins)} | TopK: {topk} | Risk degree: {risk_degree}")
     logger.info(f"   Rebalance time: daily at {args.hour:02d}:{args.minute:02d} UTC")
     logger.info("=" * 50)
 
@@ -149,7 +175,8 @@ def main():
     if args.once:
         if args.retrain:
             retrain_model(args.model)
-        run_rebalance(broker, coins, args.dry_run, args.topk, args.lookback, args.min_trade, args.model)
+        run_rebalance(broker, coins, args.dry_run, topk, args.lookback, args.min_trade, args.model,
+                      risk_degree=risk_degree)
         return
 
     while not _shutdown:
@@ -171,7 +198,8 @@ def main():
 
         if args.retrain:
             retrain_model(args.model)
-        run_rebalance(broker, coins, args.dry_run, args.topk, args.lookback, args.min_trade, args.model)
+        run_rebalance(broker, coins, args.dry_run, topk, args.lookback, args.min_trade, args.model,
+                      risk_degree=risk_degree)
 
     logger.info("👋 Server shut down safely")
 

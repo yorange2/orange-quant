@@ -39,6 +39,7 @@ class StrategyRunner:
         rebalance_interval_hours: int = 24,
         min_trade_usdc: float = 20.0,
         max_position_pct: float = 0.25,
+        risk_degree: float = 0.95,
         model_path: Optional[str] = None,
     ):
         self.broker = broker
@@ -48,6 +49,7 @@ class StrategyRunner:
         self.rebalance_interval_hours = rebalance_interval_hours
         self.min_trade_usdc = min_trade_usdc
         self.max_position_pct = max_position_pct
+        self.risk_degree = risk_degree
         self.model_path = model_path
 
         self.positions: Dict[str, float] = {}
@@ -173,19 +175,29 @@ class StrategyRunner:
                     if result:
                         trades.append(("SELL", coin, amt))
 
+            # Target per-coin budget: deploy risk_degree of equity, equal-weighted
+            budget_per_coin = (total_equity * self.risk_degree) / max(len(target_coins), 1)
+            budget_per_coin = min(budget_per_coin, total_equity * self.max_position_pct)
+
+            # Trim held target positions that are far above the per-coin budget,
+            # freeing cash so new entrants can actually be bought
+            for coin in sorted(target_coins & current_coins):
+                price = prices.get(coin, 0)
+                if price <= 0:
+                    continue
+                val = current_holdings.get(coin, 0) * price
+                excess = val - budget_per_coin
+                min_notional = self.broker.get_min_notional(coin)
+                if val > budget_per_coin * 1.3 and excess >= max(self.min_trade_usdc, min_notional):
+                    result = self.broker.market_sell(coin, excess / price)
+                    if result:
+                        trades.append(("TRIM", coin, excess))
+
             time.sleep(1)
             new_balances = self.broker.get_balances()
             updated_usdc = new_balances.get("USDC", usdc_balance)
 
             if to_buy:
-                n_buy = len(to_buy)
-                n_total = len(target_coins)
-                if n_total > 0:
-                    budget_per_coin = (total_equity * 0.95) / n_total
-                else:
-                    budget_per_coin = (updated_usdc * 0.95) / n_buy
-                budget_per_coin = min(budget_per_coin, total_equity * self.max_position_pct)
-
                 for coin in to_buy:
                     if budget_per_coin > self.min_trade_usdc and updated_usdc >= budget_per_coin:
                         result = self.broker.market_buy(coin, budget_per_coin)
