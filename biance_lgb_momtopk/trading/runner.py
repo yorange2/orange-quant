@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
 
+from . import blacklist
 from .broker import BinanceBroker, PaperBroker
 
 
@@ -192,6 +193,16 @@ class StrategyRunner:
         if signals.empty:
             return {"status": "no_data"}
 
+        # Drop reduce-only assets so their budget goes to the next-ranked coin
+        excluded = blacklist.load()
+        if excluded:
+            blocked = sorted(set(signals["coin"]) & excluded)
+            if blocked:
+                print(f"[runner] ⛔ Excluding reduce-only assets: {blocked}")
+            signals = signals[~signals["coin"].isin(excluded)]
+            if signals.empty:
+                return {"status": "no_data"}
+
         print(f"\n📊 Momentum ranking (Top {self.topk}):")
         for _, row in signals.head(self.topk).iterrows():
             print(f"  {row['rank']:.0f}. {row['coin']:8s}  "
@@ -258,13 +269,24 @@ class StrategyRunner:
 
             # Buy: size positions based on total equity
             if to_buy:
-                for coin in to_buy:
+                # Next-ranked coins to fall back on if a buy is rejected as reduce-only
+                substitutes = [
+                    c for c in signals["coin"]
+                    if c not in target_coins and c not in current_coins
+                ]
+                buy_queue = sorted(to_buy)
+                while buy_queue:
+                    coin = buy_queue.pop(0)
                     if budget_per_coin > self.min_trade_usdt and updated_usdt >= budget_per_coin:
                         sym = f"{coin}/USDT"
                         result = self.broker.market_buy(sym, budget_per_coin)
                         if result:
                             trades.append(("BUY", coin, budget_per_coin))
                             updated_usdt -= budget_per_coin
+                        elif coin in blacklist.load() and substitutes:
+                            sub = substitutes.pop(0)
+                            print(f"[runner] ↪ Substituting {sub} for reduce-only {coin}")
+                            buy_queue.append(sub)
 
         self.last_rebalance = datetime.now()
         return {

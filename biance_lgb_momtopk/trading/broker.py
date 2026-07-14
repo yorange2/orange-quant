@@ -92,6 +92,9 @@ class BinanceBroker:
             return order
         except Exception as e:
             print(f"[broker] ❌ Failed to buy {symbol}: {e}")
+            if "reduce-only" in str(e):
+                from . import blacklist
+                blacklist.add(symbol.split("/")[0])
             return None
 
     def market_sell(self, symbol: str, amount: float) -> Optional[dict]:
