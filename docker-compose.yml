@@ -26,25 +26,53 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # DRY RUN mode (observation only, no orders placed)
-  orange-quant-dry:
+  # ── Hyperliquid spot ────────────────────────────────────────
+
+  # LIVE trading on Hyperliquid, rebalance daily at 00:15 UTC
+  # --topk 5 keeps per-coin budget above the $20 minimum trade on a
+  # small account; remove it (yaml topk 12) once equity allows (~$250+)
+  orange-quant-hl:
     build: .
     image: orange-quant:latest
-    container_name: orange-quant-dry
+    container_name: orange-quant-hl
     restart: unless-stopped
     env_file:
       - .env
     volumes:
       - ./models:/app/models
       - ./data:/app/data
-    command: ["--retrain", "--dry-run", "--hour", "09", "--minute", "01", "--model", "models/binance-lgb-momtopk.pkl"]
+    entrypoint: ["python", "-m", "hyperliquid_lgb_momtopk.server"]
+    command: ["--retrain", "--hour", "0", "--minute", "15", "--model", "models/hyperliquid-lgb-momtopk.pkl", "--topk", "5"]
+    profiles:
+      - hl-live
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+
+  # Run once manually (for testing/deployment verification)
+  orange-quant-hl-once:
+    build: .
+    image: orange-quant:latest
+    container_name: orange-quant-hl-once
+    restart: "no"
+    env_file:
+      - .env
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+    entrypoint: ["python", "-m", "hyperliquid_lgb_momtopk.server"]
+    command: ["--once", "--retrain", "--dry-run", "--model", "models/hyperliquid-lgb-momtopk.pkl", "--topk", "5"]
     profiles:
-      - dry-run
+      - hl-once
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Binance one-shot ────────────────────────────────────────
 
   # Run once manually (for testing/deployment verification)
   orange-quant-once:

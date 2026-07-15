@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy project code
 COPY biance_lgb_momtopk/ ./biance_lgb_momtopk/
+COPY hyperliquid_lgb_momtopk/ ./hyperliquid_lgb_momtopk/
 COPY config/ ./config/
 
 # Initialize an empty git repo to silence the qlib recorder's git diff warning
