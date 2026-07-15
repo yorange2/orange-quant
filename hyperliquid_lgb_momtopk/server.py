@@ -175,6 +175,8 @@ def main():
     if args.once:
         if args.retrain:
             retrain_model(args.model)
+            # rebuild_data() may have refreshed the instruments list
+            coins = load_coins() or coins
         run_rebalance(broker, coins, args.dry_run, topk, args.lookback, args.min_trade, args.model,
                       risk_degree=risk_degree)
         return
@@ -198,6 +200,7 @@ def main():
 
         if args.retrain:
             retrain_model(args.model)
+            coins = load_coins() or coins
         run_rebalance(broker, coins, args.dry_run, topk, args.lookback, args.min_trade, args.model,
                       risk_degree=risk_degree)
 
