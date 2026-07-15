@@ -113,6 +113,15 @@ class HyperliquidBroker:
         df.set_index("datetime", inplace=True)
         return df
 
+    def get_quote_volumes(self, coins: List[str]) -> Dict[str, float]:
+        """Get 24h quote volume (USDC) per coin, returns {coin: volume}"""
+        symbols = [self._symbol(c) for c in coins]
+        tickers = self.exchange.fetch_tickers(symbols)
+        result = {}
+        for sym, t in tickers.items():
+            result[sym.split("/")[0]] = float(t.get("quoteVolume") or 0)
+        return result
+
     def get_min_notional(self, coin: str) -> float:
         """Get the minimum order value (USDC) for a coin's spot pair"""
         try:
@@ -239,6 +248,15 @@ class PaperBroker:
         df["datetime"] = pd.to_datetime(df["datetime"], unit="ms")
         df.set_index("datetime", inplace=True)
         return df
+
+    def get_quote_volumes(self, coins: List[str]) -> Dict[str, float]:
+        """Get 24h quote volume (USDC) per coin, returns {coin: volume}"""
+        symbols = [self._symbol(c) for c in coins]
+        tickers = self.exchange.fetch_tickers(symbols)
+        result = {}
+        for sym, t in tickers.items():
+            result[sym.split("/")[0]] = float(t.get("quoteVolume") or 0)
+        return result
 
     def get_min_notional(self, coin: str) -> float:
         """Get the minimum order value (USDC) for a coin's spot pair"""

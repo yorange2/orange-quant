@@ -40,6 +40,7 @@ class StrategyRunner:
         min_trade_usdc: float = 20.0,
         max_position_pct: float = 0.25,
         risk_degree: float = 0.95,
+        liquidity_multiple: float = 50.0,
         model_path: Optional[str] = None,
     ):
         self.broker = broker
@@ -50,6 +51,9 @@ class StrategyRunner:
         self.min_trade_usdc = min_trade_usdc
         self.max_position_pct = max_position_pct
         self.risk_degree = risk_degree
+        # A coin's 24h quote volume must be at least this multiple of the
+        # per-coin budget, or its book is too thin for our IOC market orders
+        self.liquidity_multiple = liquidity_multiple
         self.model_path = model_path
 
         self.positions: Dict[str, float] = {}
@@ -100,6 +104,19 @@ class StrategyRunner:
             df = df.sort_values("score", ascending=False)
         return df
 
+    def _filter_illiquid(self, signals: pd.DataFrame, budget_per_coin: float) -> pd.DataFrame:
+        """Drop coins whose 24h volume is too thin to absorb our orders"""
+        min_vol = budget_per_coin * self.liquidity_multiple
+        try:
+            volumes = self.broker.get_quote_volumes(list(signals["coin"]))
+        except Exception as e:
+            print(f"[runner] ⚠ Liquidity check failed ({e}), keeping all coins")
+            return signals
+        thin = [c for c in signals["coin"] if volumes.get(c, 0) < min_vol]
+        if thin:
+            print(f"[runner] 💧 Excluding thin markets (24h volume < ${min_vol:,.0f}): {thin}")
+        return signals[~signals["coin"].isin(thin)]
+
     def run_once(self, dry_run: bool = True) -> Dict:
         """Execute a single rebalance"""
         print(f"\n{'='*50}")
@@ -135,6 +152,13 @@ class StrategyRunner:
 
         # Compute ranking
         signals = self.compute_signals()
+        if signals.empty:
+            return {"status": "no_data"}
+
+        # Estimate the per-coin budget for the liquidity check
+        budget_est = (total_equity * self.risk_degree) / max(self.topk, 1)
+        budget_est = min(budget_est, total_equity * self.max_position_pct)
+        signals = self._filter_illiquid(signals, budget_est)
         if signals.empty:
             return {"status": "no_data"}
 
@@ -198,12 +222,23 @@ class StrategyRunner:
             updated_usdc = new_balances.get("USDC", usdc_balance)
 
             if to_buy:
-                for coin in to_buy:
+                # Next-ranked liquid coins to fall back on when a buy can't fill
+                substitutes = [
+                    c for c in signals["coin"]
+                    if c not in target_coins and c not in current_coins
+                ]
+                buy_queue = sorted(to_buy)
+                while buy_queue:
+                    coin = buy_queue.pop(0)
                     if budget_per_coin > self.min_trade_usdc and updated_usdc >= budget_per_coin:
                         result = self.broker.market_buy(coin, budget_per_coin)
                         if result:
                             trades.append(("BUY", coin, budget_per_coin))
                             updated_usdc -= budget_per_coin
+                        elif substitutes:
+                            sub = substitutes.pop(0)
+                            print(f"[runner] ↪ Substituting {sub} for unfillable {coin}")
+                            buy_queue.append(sub)
 
         self.last_rebalance = datetime.now()
         return {
