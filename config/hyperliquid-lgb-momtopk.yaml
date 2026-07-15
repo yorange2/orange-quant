@@ -43,8 +43,8 @@ strategy:
     kwargs:
         signal: <PRED>
         topk: 12
-        n_drop: 3
-        hold_thresh: 1
+        n_drop: 1               # low rotation: churn costs dominate on thin books
+        hold_thresh: 2
         risk_degree: 0.95
 
 backtest:
