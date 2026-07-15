@@ -41,17 +41,24 @@ def _get_exchange():
 
 
 def load_coins() -> list:
-    """Read the active coin list from the qlib instruments file"""
+    """Active coin list: qlib instruments, falling back to raw CSVs,
+    then live top-volume pairs, then a static default."""
     inst_file = QLIB_DIR / "instruments" / "all.txt"
-    if not inst_file.exists():
-        if RAW_DIR.exists():
-            return sorted([f.stem for f in RAW_DIR.glob("*.csv")])
-        return []
-    coins = []
-    for line in inst_file.read_text().strip().splitlines():
-        if "\t" in line:
-            coins.append(line.split("\t")[0])
-    return coins
+    if inst_file.exists():
+        coins = [line.split("\t")[0]
+                 for line in inst_file.read_text().strip().splitlines()
+                 if "\t" in line]
+        if coins:
+            return coins
+    if RAW_DIR.exists():
+        coins = sorted(f.stem for f in RAW_DIR.glob("*.csv"))
+        if coins:
+            return coins
+    try:
+        return [coin for _, coin in get_top_symbols(20)]
+    except Exception as e:
+        print(f"[data] ⚠ Failed to fetch top spot pairs ({e}), using static fallback")
+        return ["HYPE", "PURR", "BTC", "ETH", "SOL"]
 
 
 def _date_to_ms(date_str: str) -> int:

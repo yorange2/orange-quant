@@ -142,15 +142,8 @@ def main():
         logger.warning(f"Model {args.model} not found — falling back to momentum signals")
         args.model = None
 
-    # Load traded coins (from qlib instruments, falling back to live top-volume pairs)
+    # Load traded coins (qlib instruments, with fallbacks inside load_coins)
     coins = load_coins()
-    if not coins:
-        try:
-            from hyperliquid_lgb_momtopk.data import get_top_symbols
-            coins = [coin for _, coin in get_top_symbols(20)]
-        except Exception as e:
-            logger.warning(f"Failed to fetch top spot pairs ({e}), using static fallback")
-            coins = ["HYPE", "PURR", "BTC", "ETH", "SOL"]
 
     mode = "DRY RUN" if args.dry_run else "LIVE"
     logger.info("=" * 50)
@@ -176,7 +169,7 @@ def main():
         if args.retrain:
             retrain_model(args.model)
             # rebuild_data() may have refreshed the instruments list
-            coins = load_coins() or coins
+            coins = load_coins()
         run_rebalance(broker, coins, args.dry_run, topk, args.lookback, args.min_trade, args.model,
                       risk_degree=risk_degree)
         return
@@ -200,7 +193,7 @@ def main():
 
         if args.retrain:
             retrain_model(args.model)
-            coins = load_coins() or coins
+            coins = load_coins()
         run_rebalance(broker, coins, args.dry_run, topk, args.lookback, args.min_trade, args.model,
                       risk_degree=risk_degree)
 
