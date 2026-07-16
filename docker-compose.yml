@@ -29,8 +29,8 @@ services:
   # ── Hyperliquid spot ────────────────────────────────────────
 
   # LIVE trading on Hyperliquid, rebalance daily at 00:15 UTC
-  # --topk 5 keeps per-coin budget above the $20 minimum trade on a
-  # small account; remove it (yaml topk 12) once equity allows (~$250+)
+  # Strategy params (topk / n_drop / hold_thresh / risk_degree) come from
+  # config/hyperliquid-lgb-momtopk.yaml so live matches the backtest
   orange-quant-hl:
     build: .
     image: orange-quant:latest
@@ -42,7 +42,7 @@ services:
       - ./models:/app/models
       - ./data:/app/data
     entrypoint: ["python", "-m", "hyperliquid_lgb_momtopk.server"]
-    command: ["--retrain", "--hour", "0", "--minute", "15", "--model", "models/hyperliquid-lgb-momtopk.pkl", "--topk", "5"]
+    command: ["--retrain", "--hour", "0", "--minute", "15", "--model", "models/hyperliquid-lgb-momtopk.pkl"]
     profiles:
       - hl-live
     logging:
