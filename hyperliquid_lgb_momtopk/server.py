@@ -32,24 +32,27 @@ logging.basicConfig(
 logger = logging.getLogger("orange-quant-hl")
 
 DEFAULT_TOP_K = 5
+DEFAULT_N_DROP = 1
+DEFAULT_HOLD_THRESH = 1
 DEFAULT_LOOKBACK = 160
 DEFAULT_MIN_TRADE = 20.0
 DEFAULT_RISK_DEGREE = 0.95
 
 
 def load_strategy_defaults(model_path: str):
-    """Read topk / risk_degree from the yaml config matching the model,
-    so live trading uses the same strategy parameters as the backtest."""
+    """Read topk / risk_degree / n_drop / hold_thresh from the yaml config matching
+    the model, so live trading uses the same strategy parameters as the backtest."""
     try:
         import yaml
         cfg_path = Path("config") / f"{Path(model_path).stem}.yaml"
         if cfg_path.exists():
             cfg = yaml.safe_load(cfg_path.read_text())
             kwargs = cfg.get("strategy", {}).get("kwargs", {})
-            return kwargs.get("topk"), kwargs.get("risk_degree")
+            return (kwargs.get("topk"), kwargs.get("risk_degree"),
+                    kwargs.get("n_drop"), kwargs.get("hold_thresh"))
     except Exception as e:
         logger.warning(f"Failed to read strategy config for {model_path}: {e}")
-    return None, None
+    return None, None, None, None
 
 _shutdown = False
 
@@ -72,13 +75,16 @@ def retrain_model(model_path: str):
 
 
 def run_rebalance(broker, coins, dry_run, topk, lookback, min_trade, model_path=None,
-                  risk_degree=DEFAULT_RISK_DEGREE):
+                  risk_degree=DEFAULT_RISK_DEGREE, n_drop=DEFAULT_N_DROP,
+                  hold_thresh=DEFAULT_HOLD_THRESH):
     """Execute a single rebalance"""
     try:
         runner = StrategyRunner(
             broker=broker,
             coins=coins,
             topk=topk,
+            n_drop=n_drop,
+            hold_thresh=hold_thresh,
             lookback_days=lookback,
             min_trade_usdc=min_trade,
             risk_degree=risk_degree,
@@ -123,16 +129,24 @@ def main():
                         help="Number of positions to hold (default: strategy topk from the model's yaml config)")
     parser.add_argument("--risk-degree", type=float, default=None,
                         help="Fraction of equity to deploy (default: risk_degree from the model's yaml config)")
+    parser.add_argument("--n-drop", type=int, default=None,
+                        help="Max positions rotated per rebalance (default: n_drop from the model's yaml config)")
+    parser.add_argument("--hold-thresh", type=int, default=None,
+                        help="Min days to hold before rotating out (default: hold_thresh from the model's yaml config)")
     parser.add_argument("--lookback", type=int, default=DEFAULT_LOOKBACK, help="Lookback window in days")
     parser.add_argument("--min-trade", type=float, default=DEFAULT_MIN_TRADE, help="Minimum trade size in USDC")
     parser.add_argument("--model", type=str, default="models/hyperliquid-lgb-momtopk.pkl", help="LightGBM model path")
     parser.add_argument("--retrain", action="store_true", help="Refresh data and retrain the model before rebalancing")
     args = parser.parse_args()
 
-    # Fill topk / risk_degree from the model's yaml config unless overridden on the CLI
-    yaml_topk, yaml_risk = load_strategy_defaults(args.model) if args.model else (None, None)
+    # Fill strategy params from the model's yaml config unless overridden on the CLI
+    yaml_topk, yaml_risk, yaml_n_drop, yaml_hold = (
+        load_strategy_defaults(args.model) if args.model else (None, None, None, None)
+    )
     topk = args.topk if args.topk is not None else (yaml_topk or DEFAULT_TOP_K)
     risk_degree = args.risk_degree if args.risk_degree is not None else (yaml_risk or DEFAULT_RISK_DEGREE)
+    n_drop = args.n_drop if args.n_drop is not None else (yaml_n_drop or DEFAULT_N_DROP)
+    hold_thresh = args.hold_thresh if args.hold_thresh is not None else (yaml_hold or DEFAULT_HOLD_THRESH)
 
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
@@ -150,6 +164,7 @@ def main():
     logger.info(f"🤖 Orange Quant Hyperliquid trading server starting")
     logger.info(f"   Environment: MAINNET | Mode: {mode}")
     logger.info(f"   Coins: {len(coins)} | TopK: {topk} | Risk degree: {risk_degree}")
+    logger.info(f"   Rotation: n_drop={n_drop} | hold_thresh={hold_thresh}d")
     logger.info(f"   Rebalance time: daily at {args.hour:02d}:{args.minute:02d} UTC")
     logger.info("=" * 50)
 
@@ -171,7 +186,7 @@ def main():
             # rebuild_data() may have refreshed the instruments list
             coins = load_coins()
         run_rebalance(broker, coins, args.dry_run, topk, args.lookback, args.min_trade, args.model,
-                      risk_degree=risk_degree)
+                      risk_degree=risk_degree, n_drop=n_drop, hold_thresh=hold_thresh)
         return
 
     while not _shutdown:
@@ -195,7 +210,7 @@ def main():
             retrain_model(args.model)
             coins = load_coins()
         run_rebalance(broker, coins, args.dry_run, topk, args.lookback, args.min_trade, args.model,
-                      risk_degree=risk_degree)
+                      risk_degree=risk_degree, n_drop=n_drop, hold_thresh=hold_thresh)
 
     logger.info("👋 Server shut down safely")
 

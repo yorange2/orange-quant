@@ -5,10 +5,11 @@ Loads a trained LightGBM model, fetches market data daily,
 generates predicted signals, and executes rebalancing.
 """
 
+import json
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Union
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import numpy as np
@@ -35,6 +36,8 @@ class StrategyRunner:
         broker: Union[HyperliquidBroker, PaperBroker],
         coins: List[str],
         topk: int = 5,
+        n_drop: int = 1,
+        hold_thresh: int = 1,
         lookback_days: int = 160,
         rebalance_interval_hours: int = 24,
         min_trade_usdc: float = 20.0,
@@ -42,10 +45,15 @@ class StrategyRunner:
         risk_degree: float = 0.95,
         liquidity_multiple: float = 50.0,
         model_path: Optional[str] = None,
+        state_path: str = "data/hl_entry_dates.json",
     ):
         self.broker = broker
         self.coins = coins
         self.topk = topk
+        # Mirror TopkDropoutStrategy: rotate at most n_drop names per rebalance,
+        # and only once a position has been held hold_thresh days
+        self.n_drop = n_drop
+        self.hold_thresh = hold_thresh
         self.lookback_days = lookback_days
         self.rebalance_interval_hours = rebalance_interval_hours
         self.min_trade_usdc = min_trade_usdc
@@ -55,6 +63,7 @@ class StrategyRunner:
         # per-coin budget, or its book is too thin for our IOC market orders
         self.liquidity_multiple = liquidity_multiple
         self.model_path = model_path
+        self.state_path = Path(state_path)
 
         self.positions: Dict[str, float] = {}
         self.last_rebalance: Optional[datetime] = None
@@ -103,6 +112,27 @@ class StrategyRunner:
             df["rank"] = df["score"].rank(ascending=False)
             df = df.sort_values("score", ascending=False)
         return df
+
+    def _load_entry_dates(self) -> Dict[str, str]:
+        if self.state_path.exists():
+            try:
+                return json.loads(self.state_path.read_text())
+            except Exception as e:
+                print(f"[runner] ⚠ Unreadable entry-date state ({e}), treating holdings as opened today")
+        return {}
+
+    def _save_entry_dates(self, entries: Dict[str, str]):
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.state_path.write_text(json.dumps(entries, indent=2, sort_keys=True))
+
+    def _held_days(self, entries: Dict[str, str], coin: str, today: date) -> int:
+        entered = entries.get(coin)
+        if not entered:
+            return 0
+        try:
+            return (today - date.fromisoformat(entered)).days
+        except ValueError:
+            return 0
 
     def _filter_illiquid(self, signals: pd.DataFrame, budget_per_coin: float) -> pd.DataFrame:
         """Drop coins whose 24h volume is too thin to absorb our orders"""
@@ -168,19 +198,47 @@ class StrategyRunner:
                   f"score={row['score']:.4f}  price=${row['price']:.4f}")
 
         # Decide buys/sells
-        target_coins = set(signals.head(self.topk)["coin"])
+        ranked = list(signals["coin"])
         current_coins = {
             c for c, amt in current_holdings.items()
             if amt * prices.get(c, 0) >= self.min_trade_usdc
         }
 
-        to_buy = target_coins - current_coins
-        to_sell = current_coins - target_coins
+        today = datetime.utcnow().date()
+        entries = self._load_entry_dates()
+        for coin in current_coins:
+            entries.setdefault(coin, today.isoformat())
+        entries = {c: d for c, d in entries.items() if c in current_coins}
 
-        print(f"\n📋 Rebalance plan:")
+        # Only holdings that fell out of the target top-k are rotation candidates,
+        # worst-ranked first, and only after they have aged past hold_thresh
+        topk_coins = set(ranked[:self.topk])
+        rank_of = {c: i for i, c in enumerate(ranked)}
+        droppable = sorted(
+            (c for c in current_coins if c not in topk_coins),
+            key=lambda c: rank_of.get(c, len(ranked)),
+            reverse=True,
+        )
+        held_too_briefly = [
+            c for c in droppable
+            if self._held_days(entries, c, today) < self.hold_thresh
+        ]
+        to_sell = set(
+            [c for c in droppable if c not in held_too_briefly][:self.n_drop]
+        )
+
+        # Refill up to topk with the best-ranked names we don't already hold
+        slots = max(self.topk - (len(current_coins) - len(to_sell)), 0)
+        to_buy = set([c for c in ranked if c not in current_coins][:slots])
+        target_coins = (current_coins - to_sell) | to_buy
+
+        print(f"\n📋 Rebalance plan (topk={self.topk} n_drop={self.n_drop} hold_thresh={self.hold_thresh}d):")
         print(f"  Target holdings: {target_coins}")
         print(f"  Buy: {to_buy if to_buy else 'none'}")
         print(f"  Sell: {to_sell if to_sell else 'none'}")
+        if held_too_briefly:
+            ages = {c: self._held_days(entries, c, today) for c in held_too_briefly}
+            print(f"  ⏳ Held < {self.hold_thresh}d, not rotated yet: {ages}")
 
         trades = []
         if dry_run:
@@ -239,6 +297,14 @@ class StrategyRunner:
                             sub = substitutes.pop(0)
                             print(f"[runner] ↪ Substituting {sub} for unfillable {coin}")
                             buy_queue.append(sub)
+
+            # Age positions from their fill date, so hold_thresh survives restarts
+            for action, coin, _ in trades:
+                if action == "SELL":
+                    entries.pop(coin, None)
+                elif action == "BUY":
+                    entries[coin] = today.isoformat()
+            self._save_entry_dates(entries)
 
         self.last_rebalance = datetime.now()
         return {
