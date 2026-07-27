@@ -1,46 +1,56 @@
 """
-Binance exchange interface
+Binance exchange interface (coin-based).
 
-Connects to Binance via ccxt, providing account queries, market data, and order execution.
+Connects to Binance via ccxt, providing account queries, market data, and order
+execution. Exposes the shared coin-based broker interface the core runner/predictor
+expect: methods take a bare coin code (e.g. "BTC") and the "/USDT" quoting is
+internal.
 """
 
 import os
 from typing import Dict, List, Optional
-from datetime import datetime
 
 import ccxt
 import pandas as pd
 from dotenv import load_dotenv
 
+from orange_quant import blacklist
+from orange_quant.trading.paper_broker import PaperBroker as _CorePaperBroker
+
 load_dotenv()
+
+_QUOTE = "USDT"
+_DEFAULT_MIN_NOTIONAL = 10.0  # Binance spot default $10
+BLACKLIST_PATH = "data/reduce_only_blacklist.json"
+
+
+def _make_public_exchange() -> ccxt.binance:
+    return ccxt.binance({
+        "type": "spot",
+        "enableRateLimit": True,
+        "options": {"defaultType": "spot"},
+    })
 
 
 class BinanceBroker:
-    """
-    Binance live trading wrapper.
-
-    Usage:
-
-        broker = BinanceBroker()
-        broker.market_buy("BTC/USDT", 100)  # buy 100 USDT worth of BTC
-    """
+    """Binance live spot trading wrapper (coin-based interface)."""
 
     def __init__(self):
-        """Requires the BINANCE_API_KEY / BIANCE_SECRET_KEY environment variables to be set"""
+        """Requires BINANCE_API_KEY / BIANCE_SECRET_KEY in the environment / .env."""
         api_key = os.getenv("BINANCE_API_KEY", "")
         secret_key = os.getenv("BIANCE_SECRET_KEY", "")
 
-        self.exchange = ccxt.binance({"type": "spot",
+        self.exchange = ccxt.binance({
+            "type": "spot",
             "apiKey": api_key,
             "secret": secret_key,
             "enableRateLimit": True,
             "options": {"defaultType": "spot"},
         })
-
+        self.quote_ccy = _QUOTE
         self._verify_connection()
 
     def _verify_connection(self):
-        """Verify the connection"""
         try:
             self.exchange.load_markets()
             print(f"[broker] ✅ Connected to Binance MAINNET")
@@ -48,188 +58,97 @@ class BinanceBroker:
             print(f"[broker] ❌ Connection failed: {e}")
             raise
 
+    def _symbol(self, coin: str) -> str:
+        return f"{coin}/{_QUOTE}"
+
     def get_balances(self) -> Dict[str, float]:
-        """Get account balances, returns {coin: available balance}"""
+        """Get account balances, returns {coin: total balance} (USDT included)."""
         balance = self.exchange.fetch_balance()
         result = {}
         for asset, info in balance["total"].items():
             if info and info > 0:
-                result[asset] = info
+                result[asset] = float(info)
         return result
 
-    def get_usdt_balance(self) -> float:
-        """Get the USDT balance"""
-        balances = self.get_balances()
-        return balances.get("USDT", 0.0)
+    def get_current_prices(self, coins: List[str]) -> Dict[str, float]:
+        """Get current prices, returns {coin: price}."""
+        symbols = [self._symbol(c) for c in coins]
+        try:
+            tickers = self.exchange.fetch_tickers(symbols)
+        except Exception as e:
+            print(f"[broker] ❌ Failed to get prices: {e}")
+            return {}
+        result = {}
+        for sym, t in tickers.items():
+            if t.get("last"):
+                result[sym.split("/")[0]] = float(t["last"])
+        return result
 
-    def get_current_prices(self, symbols: List[str]) -> Dict[str, float]:
-        """Get current prices, returns {symbol: price}"""
-        tickers = self.exchange.fetch_tickers(symbols)
-        return {s: t["last"] for s, t in tickers.items() if t.get("last")}
-
-    def fetch_ohlcv(self, symbol: str, timeframe: str = "1d", limit: int = 365) -> pd.DataFrame:
-        """
-        Fetch OHLCV candle data.
-        Returns pd.DataFrame with columns: datetime, open, high, low, close, volume
-        """
-        ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-        df = pd.DataFrame(
-            ohlcv, columns=["datetime", "open", "high", "low", "close", "volume"]
-        )
+    def fetch_ohlcv(self, coin: str, timeframe: str = "1d", limit: int = 365) -> pd.DataFrame:
+        """Fetch OHLCV; columns: datetime(index), open, high, low, close, volume."""
+        ohlcv = self.exchange.fetch_ohlcv(self._symbol(coin), timeframe, limit=limit)
+        df = pd.DataFrame(ohlcv, columns=["datetime", "open", "high", "low", "close", "volume"])
         df["datetime"] = pd.to_datetime(df["datetime"], unit="ms")
         df.set_index("datetime", inplace=True)
         return df
 
-    def market_buy(self, symbol: str, amount_usdt: float) -> Optional[dict]:
-        """Market buy"""
+    def get_quote_volumes(self, coins: List[str]) -> Dict[str, float]:
+        """Get 24h quote volume (USDT) per coin, returns {coin: volume}."""
+        symbols = [self._symbol(c) for c in coins]
+        tickers = self.exchange.fetch_tickers(symbols)
+        result = {}
+        for sym, t in tickers.items():
+            result[sym.split("/")[0]] = float(t.get("quoteVolume") or 0)
+        return result
+
+    def get_min_notional(self, coin: str) -> float:
+        """Get the minimum order value (USDT) for a coin's spot pair."""
+        try:
+            market = self.exchange.market(self._symbol(coin))
+            min_notional = market.get("limits", {}).get("cost", {}).get("min")
+            return float(min_notional) if min_notional else _DEFAULT_MIN_NOTIONAL
+        except Exception:
+            return _DEFAULT_MIN_NOTIONAL
+
+    def market_buy(self, coin: str, amount_usdt: float) -> Optional[dict]:
+        """Market buy (amount specified in USDT notional)."""
+        symbol = self._symbol(coin)
         try:
             ticker = self.exchange.fetch_ticker(symbol)
             price = ticker["last"]
-            market = self.exchange.market(symbol)
             amount = self.exchange.amount_to_precision(symbol, amount_usdt / price)
             order = self.exchange.create_market_buy_order(symbol, float(amount))
             print(f"[broker] ✅ Bought {symbol} {amount} @ ~{price:.2f} = ~${amount_usdt:.2f}")
             return order
         except Exception as e:
-            print(f"[broker] ❌ Failed to buy {symbol}: {e}")
+            print(f"[broker] ❌ Failed to buy {coin}: {e}")
             if "reduce-only" in str(e):
-                from . import blacklist
-                blacklist.add(symbol.split("/")[0])
+                blacklist.add(coin, BLACKLIST_PATH)
             return None
 
-    def market_sell(self, symbol: str, amount: float) -> Optional[dict]:
-        """Market sell"""
+    def market_sell(self, coin: str, amount: float) -> Optional[dict]:
+        """Market sell (amount specified in base units)."""
+        symbol = self._symbol(coin)
         try:
             amount = self.exchange.amount_to_precision(symbol, amount)
             order = self.exchange.create_market_sell_order(symbol, float(amount))
             print(f"[broker] ✅ Sold {symbol} {amount}")
             return order
         except Exception as e:
-            print(f"[broker] ❌ Failed to sell {symbol}: {e}")
+            print(f"[broker] ❌ Failed to sell {coin}: {e}")
             return None
 
-    def get_open_orders(self, symbol: Optional[str] = None) -> list:
-        """Get open (unfilled) orders"""
+    def get_open_orders(self, coin: Optional[str] = None) -> list:
+        symbol = self._symbol(coin) if coin else None
         return self.exchange.fetch_open_orders(symbol)
 
-    def cancel_all_orders(self, symbol: Optional[str] = None):
-        """Cancel all open orders"""
-        orders = self.get_open_orders(symbol)
+    def cancel_all_orders(self, coin: Optional[str] = None):
+        orders = self.get_open_orders(coin)
         for o in orders:
             self.exchange.cancel_order(o["id"], o["symbol"])
         print(f"[broker] Cancelled {len(orders)} open orders")
 
 
-class PaperBroker:
-    """
-    Simulated exchange (paper trading).
-
-    Uses the public API for market data, simulates the account locally, no orders sent to the exchange.
-
-    Usage:
-
-        broker = PaperBroker(coins=["BTC", "ETH"], initial_usdt=100000)
-    """
-
-    def __init__(self, coins: List[str], initial_usdt: float = 100000.0):
-        """
-        Parameters
-        ----------
-        coins : list[str]
-            Traded coins list (without the USDT suffix).
-        initial_usdt : float
-            Initial USDT amount.
-        """
-        self.exchange = ccxt.binance({"type": "spot",
-            "enableRateLimit": True,
-            "options": {"defaultType": "spot"},
-        })
-
-        self._balance = {c: 0.0 for c in coins}
-        self._balance["USDT"] = initial_usdt
-        self._trades = []
-
-        self._verify_connection()
-
-    def _verify_connection(self):
-        """Verify the connection"""
-        try:
-            self.exchange.load_markets()
-            print(f"[broker] ✅ Binance Paper Trading mode (initial ${self._balance.get('USDT', 0):,.0f})")
-        except Exception as e:
-            print(f"[broker] ❌ Connection failed: {e}")
-            raise
-
-    def get_balances(self) -> Dict[str, float]:
-        """Get account balances"""
-        return {k: v for k, v in self._balance.items() if v > 0}
-
-    def get_usdt_balance(self) -> float:
-        """Get the USDT balance"""
-        return self._balance.get("USDT", 0.0)
-
-    def get_current_prices(self, symbols: List[str]) -> Dict[str, float]:
-        """Get current prices"""
-        tickers = self.exchange.fetch_tickers(symbols)
-        return {s: t["last"] for s, t in tickers.items() if t.get("last")}
-
-    def fetch_ohlcv(self, symbol: str, timeframe: str = "1d", limit: int = 365) -> pd.DataFrame:
-        """Fetch OHLCV candle data"""
-        ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-        df = pd.DataFrame(
-            ohlcv, columns=["datetime", "open", "high", "low", "close", "volume"]
-        )
-        df["datetime"] = pd.to_datetime(df["datetime"], unit="ms")
-        df.set_index("datetime", inplace=True)
-        return df
-
-    def market_buy(self, symbol: str, amount_usdt: float) -> Optional[dict]:
-        """Simulated market buy"""
-        try:
-            ticker = self.exchange.fetch_ticker(symbol)
-            price = ticker["last"]
-            amount = amount_usdt / price
-            coin = symbol.split("/")[0]
-            cost = amount * price
-
-            if self._balance.get("USDT", 0) >= cost:
-                self._balance["USDT"] -= cost
-                self._balance[coin] = self._balance.get(coin, 0) + amount
-                self._trades.append({
-                    "time": datetime.now(), "side": "BUY", "symbol": symbol,
-                    "amount": amount, "price": price, "cost": cost,
-                })
-            print(f"[broker] 📝 Paper BUY  {symbol} {amount:.6f} @ ${price:.2f} = ${cost:.2f}")
-            return {"symbol": symbol, "side": "buy", "amount": amount, "price": price, "status": "paper"}
-        except Exception as e:
-            print(f"[broker] ❌ Failed to buy {symbol}: {e}")
-            return None
-
-    def market_sell(self, symbol: str, amount: float) -> Optional[dict]:
-        """Simulated market sell"""
-        try:
-            coin = symbol.split("/")[0]
-            ticker = self.exchange.fetch_ticker(symbol)
-            price = ticker["last"]
-
-            if self._balance.get(coin, 0) >= amount:
-                self._balance[coin] -= amount
-                revenue = amount * price
-                self._balance["USDT"] = self._balance.get("USDT", 0) + revenue
-                self._trades.append({
-                    "time": datetime.now(), "side": "SELL", "symbol": symbol,
-                    "amount": amount, "price": price, "revenue": revenue,
-                })
-            print(f"[broker] 📝 Paper SELL {symbol} {amount:.6f} @ ${price:.2f} = ${amount*price:.2f}")
-            return {"symbol": symbol, "side": "sell", "amount": amount, "price": price, "status": "paper"}
-        except Exception as e:
-            print(f"[broker] ❌ Failed to sell {symbol}: {e}")
-            return None
-
-    def get_open_orders(self, symbol: Optional[str] = None) -> list:
-        """Simulated account has no open orders"""
-        return []
-
-    def cancel_all_orders(self, symbol: Optional[str] = None):
-        """Simulated account needs no cancellation"""
-        pass
+def PaperBroker(coins: List[str], initial_usdt: float = 100000.0):
+    """Back-compatible factory: the shared paper broker quoted in USDT on Binance."""
+    return _CorePaperBroker(coins, _QUOTE, _make_public_exchange, initial_cash=initial_usdt)
