@@ -64,14 +64,24 @@ def on_signal(signum, frame):
 
 
 def retrain_model(model_path: str):
-    """Incrementally refresh data + retrain the model"""
-    logger.info("📥 Refreshing data incrementally...")
-    rebuild_data()
-    config_name = Path(model_path).stem
-    logger.info(f"🚀 Retraining: {config_name}")
-    from hyperliquid_lgb_momtopk.workflow.experiment import run_from_yaml
-    run_from_yaml(f"config/{config_name}.yaml")
-    logger.info("✅ Model updated")
+    """Incrementally refresh data + retrain the model.
+
+    Never raises: a retrain failure must not crash the daily loop or skip the
+    rebalance. On failure we log and fall back to the previously saved model.
+    """
+    try:
+        logger.info("📥 Refreshing data incrementally...")
+        rebuild_data()
+        config_name = Path(model_path).stem
+        logger.info(f"🚀 Retraining: {config_name}")
+        from hyperliquid_lgb_momtopk.workflow.experiment import run_from_yaml
+        run_from_yaml(f"config/{config_name}.yaml")
+        logger.info("✅ Model updated")
+    except Exception as e:
+        logger.error(
+            f"Retrain failed ({e}); continuing with the existing model",
+            exc_info=True,
+        )
 
 
 def run_rebalance(broker, coins, dry_run, topk, lookback, min_trade, model_path=None,

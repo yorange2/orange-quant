@@ -17,6 +17,7 @@ from qlib.workflow.record_temp import SignalRecord, PortAnaRecord, SigAnaRecord
 from qlib.data.dataset import DatasetH
 from qlib.contrib.data.handler import Alpha158
 from qlib.contrib.model.gbdt import LGBModel
+from qlib.utils.paral import AsyncCaller
 
 
 class QuantExperiment:
@@ -127,47 +128,39 @@ class QuantExperiment:
 
         with R.start(experiment_name="hyperliquid_lgb_momtopk_exp"):
             recorder = R.get_recorder()
-            R.log_params(
-                instruments=self.instruments,
-                train_period=f"{self.train_start}_{self.train_end}",
-                test_period=f"{self.test_start}_{self.test_end}",
-                **self.model_params,
-            )
+            # The signal-analysis and backtest records below are experiment
+            # tracking only — the live server just needs the trained model. A
+            # transient mlflow hiccup here must never take down the pipeline, so
+            # keep them non-fatal and let run() still return the model.
+            try:
+                R.log_params(
+                    instruments=self.instruments,
+                    train_period=f"{self.train_start}_{self.train_end}",
+                    test_period=f"{self.test_start}_{self.test_end}",
+                    **self.model_params,
+                )
 
-            sr = SignalRecord(model, dataset, recorder)
-            sr.generate()
+                sr = SignalRecord(model, dataset, recorder)
+                sr.generate()
 
-            sar = SigAnaRecord(recorder)
-            sar.generate()
+                sar = SigAnaRecord(recorder)
+                sar.generate()
 
-            port_analysis_config = {
-                "executor": {
-                    "class": "SimulatorExecutor",
-                    "module_path": "qlib.backtest.executor",
-                    "kwargs": {
-                        "time_per_step": "day",
-                        "generate_portfolio_metrics": True,
-                    },
-                },
-                "backtest": {
-                    "start_time": self.test_start,
-                    "end_time": self.test_end,
-                    "account": 1000000,
-                    "benchmark": self.backtest_params.get("benchmark", "BTC"),
-                    "exchange_kwargs": self.backtest_params.get("exchange_kwargs", {
-                        "freq": "day",
-                        "limit_threshold": 1.0,
-                        "deal_price": "close",
-                        "open_cost": 0.0005,
-                        "close_cost": 0.0005,
-                        "min_cost": 0,
-                    }),
-                },
-                "strategy": self.strategy_config,
-            }
+                # SigAnaRecord logs IC/Rank IC metrics on a background thread
+                # (qlib wraps log_metrics with AsyncCaller). PortAnaRecord.check()
+                # below reads every metric file back synchronously, so without a
+                # flush it can hit a half-written 'Rank IC' file and raise
+                # "Metric 'Rank IC' is malformed. No data found." Flush the queue,
+                # then reopen a fresh caller so PortAnaRecord's own metric logging
+                # (and end_run) still works — mirrors qlib's own start_run pattern.
+                if getattr(recorder, "async_log", None) is not None:
+                    recorder.async_log.wait()
+                    recorder.async_log = AsyncCaller()
 
-            par = PortAnaRecord(recorder, port_analysis_config, "day")
-            par.generate()
+                self._run_backtest_record(recorder)
+            except Exception as e:  # noqa: BLE001 - analysis is best-effort
+                print(f"⚠️  Analysis/backtest recording failed "
+                      f"(model is still valid and will be exported): {e}")
 
         print("\n" + "=" * 60)
         print("✅ Experiment complete! Use `R.get_recorder()` to view results.")
@@ -178,6 +171,37 @@ class QuantExperiment:
             "predictions": predictions,
             "recorder": recorder,
         }
+
+    def _run_backtest_record(self, recorder) -> None:
+        """Build the portfolio-analysis (backtest) record for experiment tracking."""
+        port_analysis_config = {
+            "executor": {
+                "class": "SimulatorExecutor",
+                "module_path": "qlib.backtest.executor",
+                "kwargs": {
+                    "time_per_step": "day",
+                    "generate_portfolio_metrics": True,
+                },
+            },
+            "backtest": {
+                "start_time": self.test_start,
+                "end_time": self.test_end,
+                "account": 1000000,
+                "benchmark": self.backtest_params.get("benchmark", "BTC"),
+                "exchange_kwargs": self.backtest_params.get("exchange_kwargs", {
+                    "freq": "day",
+                    "limit_threshold": 1.0,
+                    "deal_price": "close",
+                    "open_cost": 0.0005,
+                    "close_cost": 0.0005,
+                    "min_cost": 0,
+                }),
+            },
+            "strategy": self.strategy_config,
+        }
+
+        par = PortAnaRecord(recorder, port_analysis_config, "day")
+        par.generate()
 
 
 def run_from_yaml(config_path: str = "config/hyperliquid-lgb-momtopk.yaml") -> dict:

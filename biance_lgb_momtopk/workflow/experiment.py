@@ -22,6 +22,22 @@ from qlib.workflow.record_temp import SignalRecord, PortAnaRecord, SigAnaRecord
 from qlib.data.dataset import DatasetH
 from qlib.data.dataset.handler import DataHandlerLP
 from qlib.utils import init_instance_by_config
+from qlib.utils.paral import AsyncCaller
+
+
+def _flush_async_metrics(recorder) -> None:
+    """Flush qlib's background metric logger before metrics are read back.
+
+    SigAnaRecord logs IC/Rank IC on a background thread (qlib wraps log_metrics
+    with AsyncCaller). PortAnaRecord.check() then reads every metric file back
+    synchronously, so without a flush it can hit a half-written 'Rank IC' file
+    and raise "Metric 'Rank IC' is malformed. No data found." We flush the queue,
+    then reopen a fresh caller so later metric logging (and end_run) still works
+    — this mirrors qlib's own start_run pattern.
+    """
+    if getattr(recorder, "async_log", None) is not None:
+        recorder.async_log.wait()
+        recorder.async_log = AsyncCaller()
 
 from qlib.contrib.data.handler import Alpha158
 from qlib.contrib.model.gbdt import LGBModel
@@ -212,54 +228,65 @@ class QuantExperiment:
 
         with R.start(experiment_name="biance_lgb_momtopk_exp"):
             recorder = R.get_recorder()  # Save the recorder reference immediately
-            R.log_params(
-                instruments=self.instruments,
-                train_period=f"{self.train_start}_{self.train_end}",
-                test_period=f"{self.test_start}_{self.test_end}",
-                **self.model_params,
-            )
+            # The signal-analysis and backtest records below are experiment
+            # tracking only — callers just need the trained model. A transient
+            # mlflow hiccup here must never take down the pipeline, so keep them
+            # non-fatal and let run() still return the model.
+            try:
+                R.log_params(
+                    instruments=self.instruments,
+                    train_period=f"{self.train_start}_{self.train_end}",
+                    test_period=f"{self.test_start}_{self.test_end}",
+                    **self.model_params,
+                )
 
-            # Signal record
-            sr = SignalRecord(model, dataset, recorder)
-            sr.generate()
+                # Signal record
+                sr = SignalRecord(model, dataset, recorder)
+                sr.generate()
 
-            # Signal analysis (IC, Rank IC, Long-Short returns)
-            sar = SigAnaRecord(recorder)
-            sar.generate()
+                # Signal analysis (IC, Rank IC, Long-Short returns)
+                sar = SigAnaRecord(recorder)
+                sar.generate()
 
-            # Backtest -- uses biance_lgb_momtopk strategy config
-            port_analysis_config = {
-                "executor": {
-                    "class": "SimulatorExecutor",
-                    "module_path": "qlib.backtest.executor",
-                    "kwargs": {
-                        "time_per_step": "day",
-                        "generate_portfolio_metrics": True,
+                # Flush async metric writes before PortAnaRecord reads them back
+                _flush_async_metrics(recorder)
+
+                # Backtest -- uses biance_lgb_momtopk strategy config
+                port_analysis_config = {
+                    "executor": {
+                        "class": "SimulatorExecutor",
+                        "module_path": "qlib.backtest.executor",
+                        "kwargs": {
+                            "time_per_step": "day",
+                            "generate_portfolio_metrics": True,
+                        },
                     },
-                },
-                "backtest": {
-                    "start_time": self.test_start,
-                    "end_time": self.test_end,
-                    "account": 100000000,  # Initial capital: 100 million
-                    "benchmark": self.backtest_params.get("benchmark", "SH000300"),
-                    "exchange_kwargs": self.backtest_params.get("exchange_kwargs", {
-                        "freq": "day",
-                        "limit_threshold": 0.095,
-                        "deal_price": "close",
-                        "open_cost": 0.0005,
-                        "close_cost": 0.0015,
-                        "min_cost": 5,
-                    }),
-                },
-                "strategy": self.strategy_config,
-            }
+                    "backtest": {
+                        "start_time": self.test_start,
+                        "end_time": self.test_end,
+                        "account": 100000000,  # Initial capital: 100 million
+                        "benchmark": self.backtest_params.get("benchmark", "SH000300"),
+                        "exchange_kwargs": self.backtest_params.get("exchange_kwargs", {
+                            "freq": "day",
+                            "limit_threshold": 0.095,
+                            "deal_price": "close",
+                            "open_cost": 0.0005,
+                            "close_cost": 0.0015,
+                            "min_cost": 5,
+                        }),
+                    },
+                    "strategy": self.strategy_config,
+                }
 
-            par = PortAnaRecord(
-                recorder,
-                port_analysis_config,
-                "day",
-            )
-            par.generate()
+                par = PortAnaRecord(
+                    recorder,
+                    port_analysis_config,
+                    "day",
+                )
+                par.generate()
+            except Exception as e:  # noqa: BLE001 - analysis is best-effort
+                print(f"⚠️  Analysis/backtest recording failed "
+                      f"(model is still valid and will be exported): {e}")
 
         print("\n" + "=" * 60)
         print("✅ Experiment complete! Use `R.get_recorder()` to view results.")
@@ -436,6 +463,9 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
         # Signal analysis
         sar = SigAnaRecord(recorder)
         sar.generate()
+
+        # Flush async metric writes before PortAnaRecord reads them back
+        _flush_async_metrics(recorder)
 
         # Backtest
         port_analysis_config = {
