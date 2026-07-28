@@ -359,7 +359,9 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
     model.fit(dataset)
     print(f"[experiment] {model_name} training complete!")
 
-    predictions = model.predict(dataset, segment="test")
+    # qlib PyTorch models' predict() takes no `segment` (it uses the test segment
+    # internally) — unlike LGBModel.predict(dataset, segment="test").
+    predictions = model.predict(dataset)
 
     if mlflow.active_run():
         mlflow.end_run()
