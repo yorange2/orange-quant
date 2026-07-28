@@ -55,6 +55,51 @@ _DEFAULT_EXCHANGE_KWARGS = {
 }
 
 
+def _prefer_mps(model):
+    """Move a qlib PyTorch model to the Apple MPS (Metal) GPU when available.
+
+    qlib's PyTorch models only auto-select CUDA-or-CPU (their ``GPU`` kwarg is
+    CUDA-only), so on Apple Silicon they train on CPU. Overriding ``model.device``
+    and moving the underlying module to ``mps`` gives a large speedup. The inner
+    module's positional encoding is a registered buffer, so it moves with ``.to``.
+    Safe no-op when MPS is unavailable or the model has no ``.model``/``.device``.
+    Set PYTORCH_ENABLE_MPS_FALLBACK=1 so any op MPS lacks falls back to CPU.
+    """
+    try:
+        import torch
+    except Exception:
+        return model
+    mps = getattr(torch.backends, "mps", None)
+    if not (mps and mps.is_available()):
+        return model
+    try:
+        dev = torch.device("mps")
+        if hasattr(model, "model") and hasattr(model.model, "to"):
+            model.model.to(dev)
+        if hasattr(model, "device"):
+            model.device = dev
+        print(f"[experiment] Using Apple MPS (Metal GPU) for {type(model).__name__}")
+    except Exception as e:
+        print(f"[experiment] MPS enable failed ({e}); staying on the default device")
+    return model
+
+
+def _cast_handler_float32(handler) -> None:
+    """Downcast a qlib handler's prepared frames to float32 (for MPS).
+
+    qlib feeds the transformer the raw batch dtype (float64) and MPS rejects
+    float64, so cast the processed learn/infer/raw frames the samplers read from.
+    """
+    import numpy as np
+    for attr in ("_learn", "_infer", "_data"):
+        df = getattr(handler, attr, None)
+        if df is not None and hasattr(df, "astype"):
+            try:
+                setattr(handler, attr, df.astype(np.float32))
+            except Exception as e:
+                print(f"[experiment] float32 cast of handler.{attr} failed: {e}")
+
+
 def _flush_async_metrics(recorder) -> None:
     """Flush qlib's background metric logger before metrics are read back.
 
@@ -354,6 +399,11 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
     module = importlib.import_module(module_path)
     model_cls = getattr(module, model_name)
     model = model_cls(**model_kwargs)
+    _prefer_mps(model)
+    if str(getattr(model, "device", "")) == "mps":
+        # MPS is float32-only, but qlib moves the raw float64 batch to the device
+        # before casting inside forward(), so downcast the prepared data first.
+        _cast_handler_float32(handler)
 
     print(f"[experiment] Starting training of {model_name} model...")
     model.fit(dataset)

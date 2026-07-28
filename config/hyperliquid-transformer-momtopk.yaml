@@ -17,7 +17,7 @@ data:
     instruments: all
 
 train:
-    start: "2024-01-01"          # shorter window -> much faster per-epoch eval
+    start: "2022-01-01"          # full history -> more samples for the model
     end: "2025-06-30"
 valid:
     start: "2025-07-01"
@@ -30,19 +30,19 @@ model:
     name: TransformerModel
     kwargs:
         d_feat: 20              # must match the 20-col FilterCol in run_dl_from_yaml
-        hidden_size: 16         # small model: fast on CPU
-        num_layers: 1
-        dropout: 0.1
-        n_epochs: 15
-        lr: 0.001
-        early_stop: 3
-        batch_size: 2000        # fewer steps per epoch
+        hidden_size: 32         # moderate capacity
+        num_layers: 2
+        dropout: 0.3            # heavier regularization for a small, noisy dataset
+        n_epochs: 40
+        lr: 0.0003              # lower LR -> more stable transformer training
+        early_stop: 6           # more patience to find a better epoch
+        batch_size: 1024
         metric: loss
         loss: mse
         GPU: 0                  # falls back to CPU when CUDA is unavailable
 
 dataset:
-    step_len: 10               # shorter sequences -> faster
+    step_len: 20               # longer lookback window for temporal context
 
 strategy:
     class: TopkDropoutStrategy
