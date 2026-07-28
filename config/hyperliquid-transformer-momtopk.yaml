@@ -1,0 +1,67 @@
+# =============================================================
+# Orange Quant Hyperliquid spot experiment — Transformer (DL)
+# =============================================================
+# Data source: Hyperliquid spot (same qlib data as the LGB config)
+# Model: qlib TransformerModel (PyTorch) on Alpha158 (20-col FilterCol, d_feat=20)
+# Costs: spot taker 0.05% x2 (Hyperliquid standard fee rate)
+# Train via: run_dl_from_yaml (needs PyTorch — host .venv, not the Docker image)
+# macOS: export OMP_NUM_THREADS=1 KMP_DUPLICATE_LIB_OK=TRUE to avoid the
+#        duplicate-OpenMP segfault (torch libomp vs qlib/lightgbm libomp).
+# =============================================================
+
+qlib_init:
+    provider_uri: "data/qlib_data/hyperliquid"
+    region: cn
+
+data:
+    instruments: all
+
+train:
+    start: "2024-01-01"          # shorter window -> much faster per-epoch eval
+    end: "2025-06-30"
+valid:
+    start: "2025-07-01"
+    end: "2026-01-31"
+test:
+    start: "2026-02-01"
+    end: "2026-06-27"
+
+model:
+    name: TransformerModel
+    kwargs:
+        d_feat: 20              # must match the 20-col FilterCol in run_dl_from_yaml
+        hidden_size: 16         # small model: fast on CPU
+        num_layers: 1
+        dropout: 0.1
+        n_epochs: 15
+        lr: 0.001
+        early_stop: 3
+        batch_size: 2000        # fewer steps per epoch
+        metric: loss
+        loss: mse
+        GPU: 0                  # falls back to CPU when CUDA is unavailable
+
+dataset:
+    step_len: 10               # shorter sequences -> faster
+
+strategy:
+    class: TopkDropoutStrategy
+    module_path: qlib.contrib.strategy.signal_strategy
+    kwargs:
+        signal: <PRED>
+        topk: 12
+        n_drop: 1               # low rotation: churn costs dominate on thin books
+        hold_thresh: 2
+        risk_degree: 0.95
+
+backtest:
+    benchmark: BTC
+    account: 1000000
+    freq: day
+    exchange_kwargs:
+        freq: day
+        limit_threshold: 1.0
+        deal_price: close
+        open_cost: 0.0005            # Hyperliquid taker 0.05%
+        close_cost: 0.0005           # Hyperliquid taker 0.05%
+        min_cost: 0
