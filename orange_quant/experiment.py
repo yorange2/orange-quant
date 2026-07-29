@@ -44,6 +44,13 @@ KNOWN_DL_MODULES = {
     "Sandwich": "qlib.contrib.model.pytorch_sandwich",
 }
 
+# qlib's "Alpha158 for NN" 20-column FilterCol recipe (the well-behaved subset).
+_NN20_COLS = [
+    "RESI5", "WVMA5", "RSQR5", "KLEN", "RSQR10", "CORR5", "CORD5", "CORR10",
+    "ROC60", "RESI10", "VSTD5", "RSQR60", "CORR60", "WVMA60", "STD5", "RSQR20",
+    "CORD60", "CORD10", "CORR20", "KLOW",
+]
+
 _DEFAULT_ACCOUNT = 1000000
 _DEFAULT_EXCHANGE_KWARGS = {
     "freq": "day",
@@ -60,11 +67,28 @@ def _prefer_mps(model):
 
     qlib's PyTorch models only auto-select CUDA-or-CPU (their ``GPU`` kwarg is
     CUDA-only), so on Apple Silicon they train on CPU. Overriding ``model.device``
-    and moving the underlying module to ``mps`` gives a large speedup. The inner
-    module's positional encoding is a registered buffer, so it moves with ``.to``.
-    Safe no-op when MPS is unavailable or the model has no ``.model``/``.device``.
+    and moving the underlying ``nn.Module`` to ``mps`` gives a large speedup. Any
+    registered buffers (e.g. a transformer's positional encoding) move with ``.to``.
+
+    The inner module attribute is named differently across qlib models
+    (``model`` for TransformerModel, ``ALSTM_model``/``GRU_model``/``LSTM_model``
+    for the recurrent ones), so we can't hard-code ``model.model``: we scan the
+    model's attributes and move every ``nn.Module`` we find. Missing that is not
+    cosmetic — qlib moves the *input* batch to ``self.device`` during fit/predict,
+    so a device set to ``mps`` with weights left on CPU raises a hard
+    "weight is on cpu but expected on mps" error.
+
+    Safe no-op when MPS is unavailable or the model has no ``nn.Module``/``device``.
     Set PYTORCH_ENABLE_MPS_FALLBACK=1 so any op MPS lacks falls back to CPU.
     """
+    import os
+    if os.environ.get("ORANGE_DISABLE_MPS"):
+        # Escape hatch: MPS' CPU-fallback for ops it lacks (e.g. some LSTM/
+        # attention kernels) can thrash device transfers and end up slower than
+        # native CPU for these small recurrent models. Set ORANGE_DISABLE_MPS=1
+        # to keep training on CPU.
+        print("[experiment] ORANGE_DISABLE_MPS set; training on CPU")
+        return model
     try:
         import torch
     except Exception:
@@ -74,11 +98,20 @@ def _prefer_mps(model):
         return model
     try:
         dev = torch.device("mps")
-        if hasattr(model, "model") and hasattr(model.model, "to"):
-            model.model.to(dev)
+        moved = []
+        for attr in vars(model):
+            val = getattr(model, attr)
+            if isinstance(val, torch.nn.Module):
+                val.to(dev)
+                moved.append(attr)
         if hasattr(model, "device"):
             model.device = dev
-        print(f"[experiment] Using Apple MPS (Metal GPU) for {type(model).__name__}")
+        if moved:
+            print(f"[experiment] Using Apple MPS (Metal GPU) for "
+                  f"{type(model).__name__} (moved: {', '.join(moved)})")
+        else:
+            print(f"[experiment] No nn.Module found on {type(model).__name__}; "
+                  f"set device=mps only")
     except Exception as e:
         print(f"[experiment] MPS enable failed ({e}); staying on the default device")
     return model
@@ -98,6 +131,32 @@ def _cast_handler_float32(handler) -> None:
                 setattr(handler, attr, df.astype(np.float32))
             except Exception as e:
                 print(f"[experiment] float32 cast of handler.{attr} failed: {e}")
+
+
+def _float32_reweighter():
+    """A Reweighter that yields float32 sample weights (for MPS).
+
+    qlib's recurrent models (ALSTM/GRU/LSTM) otherwise build the training weight
+    as ``np.ones(len(dl))`` — float64 — and do ``weight.to(self.device)`` before
+    the loss. MPS has no float64 dtype at all, so that move raises outright. Their
+    ``fit`` accepts a ``reweighter`` whose weights are used verbatim, so returning
+    float32 ones keeps the loss identical (all-ones) while staying MPS-safe.
+    Returns ``None`` if qlib's Reweighter base can't be imported.
+    """
+    try:
+        from qlib.data.dataset.weight import Reweighter
+    except Exception:
+        return None
+    import numpy as np
+
+    class _Float32Ones(Reweighter):
+        def __init__(self):  # base __init__ intentionally raises; override it
+            pass
+
+        def reweight(self, data):
+            return np.ones(len(data), dtype=np.float32)
+
+    return _Float32Ones()
 
 
 def _flush_async_metrics(recorder) -> None:
@@ -346,7 +405,36 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
     print(f"[experiment] Initializing qlib, data path: {provider_uri}")
     qlib.init(provider_uri=provider_uri, region=region)
 
-    print(f"[experiment] Loading data: {instruments}, step_len={step_len}")
+    # Feature selection for the NN. The qlib "Alpha158 for NN" recipe filters the
+    # 158 raw features down to 20 well-behaved ones (default). That handicaps the
+    # DL model relative to LGB, which trains on all 158, so make it configurable:
+    #   dataset.feature_cols: "nn20" (default) -> the 20-col FilterCol below
+    #                         "all"            -> no FilterCol, all 158 features
+    #                         [list of names]  -> use exactly those columns
+    # Whatever is chosen must match model.kwargs.d_feat.
+    feature_cols = dataset_cfg.get("feature_cols", "nn20")
+    infer_processors = []
+    if feature_cols not in ("all", None):
+        col_list = _NN20_COLS if feature_cols == "nn20" else list(feature_cols)
+        infer_processors.append(
+            {"class": "FilterCol",
+             "kwargs": {"fields_group": "feature", "col_list": col_list}}
+        )
+        n_feat = len(col_list)
+    else:
+        n_feat = 158  # full Alpha158 feature set
+    infer_processors += [
+        {"class": "RobustZScoreNorm", "kwargs": {"fields_group": "feature", "clip_outlier": True}},
+        {"class": "Fillna", "kwargs": {"fields_group": "feature"}},
+    ]
+    d_feat = model_kwargs.get("d_feat")
+    if d_feat is not None and d_feat != n_feat:
+        print(f"[experiment] WARNING: model d_feat={d_feat} != selected "
+              f"feature count {n_feat}; overriding d_feat={n_feat}")
+    model_kwargs["d_feat"] = n_feat
+
+    print(f"[experiment] Loading data: {instruments}, step_len={step_len}, "
+          f"features={feature_cols} (d_feat={n_feat})")
 
     from qlib.data.dataset import TSDatasetH
 
@@ -356,22 +444,7 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
         end_time=test_end,
         fit_start_time=train_start,
         fit_end_time=train_end,
-        infer_processors=[
-            {
-                "class": "FilterCol",
-                "kwargs": {
-                    "fields_group": "feature",
-                    "col_list": [
-                        "RESI5", "WVMA5", "RSQR5", "KLEN", "RSQR10", "CORR5",
-                        "CORD5", "CORR10", "ROC60", "RESI10", "VSTD5", "RSQR60",
-                        "CORR60", "WVMA60", "STD5", "RSQR20", "CORD60", "CORD10",
-                        "CORR20", "KLOW",
-                    ],
-                },
-            },
-            {"class": "RobustZScoreNorm", "kwargs": {"fields_group": "feature", "clip_outlier": True}},
-            {"class": "Fillna", "kwargs": {"fields_group": "feature"}},
-        ],
+        infer_processors=infer_processors,
         learn_processors=[
             {"class": "DropnaLabel"},
             {"class": "CSRankNorm", "kwargs": {"fields_group": "label"}},
@@ -400,13 +473,22 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
     model_cls = getattr(module, model_name)
     model = model_cls(**model_kwargs)
     _prefer_mps(model)
+    fit_kwargs = {}
     if str(getattr(model, "device", "")) == "mps":
         # MPS is float32-only, but qlib moves the raw float64 batch to the device
         # before casting inside forward(), so downcast the prepared data first.
         _cast_handler_float32(handler)
+        # ...and, for models whose fit takes a reweighter (ALSTM/GRU/LSTM), swap
+        # the default float64 all-ones weight for a float32 one (MPS has no
+        # float64, so their `weight.to(device)` would otherwise raise).
+        import inspect
+        if "reweighter" in inspect.signature(model.fit).parameters:
+            rw = _float32_reweighter()
+            if rw is not None:
+                fit_kwargs["reweighter"] = rw
 
     print(f"[experiment] Starting training of {model_name} model...")
-    model.fit(dataset)
+    model.fit(dataset, **fit_kwargs)
     print(f"[experiment] {model_name} training complete!")
 
     # qlib PyTorch models' predict() takes no `segment` (it uses the test segment
