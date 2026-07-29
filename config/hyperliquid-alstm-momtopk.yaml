@@ -1,0 +1,87 @@
+# =============================================================
+# Orange Quant Hyperliquid spot experiment — ALSTM (DL), full Alpha158
+# =============================================================
+# Data source: Hyperliquid spot (same qlib data as the LGB config)
+# Model: qlib ALSTM (attention-LSTM, PyTorch) on the FULL 158-col Alpha158.
+#
+# Findings from the sweep (2026-07-28), vs the LGB baseline on the same data
+# (LGB: RankIC ~0.042, net IR ~2.55, net ann ~7.5 — averaged over 6 seeds):
+#   * Feature set is the dominant lever. The qlib "Alpha158-for-NN" 20-col
+#     FilterCol (feature_cols: nn20) caps RankIC at ~0.005; giving the NN all
+#     158 features (feature_cols: all, below) lifts RankIC to ~0.039 — an 8x
+#     jump that matches LGB's ranking quality. This is the big win over the
+#     old nn20 Transformer config (RankIC ~0.015).
+#   * lr ~1e-4 with dropout 0.2-0.3 is the sweet spot; higher lr collapses IC.
+#   * HONEST CAVEAT: single-run DL backtest return is high-variance (a seed can
+#     score net ann 2 or 12 on the same config). A 7-9 seed ensemble reveals the
+#     robust figure is ~net ann 3, IR ~1.9 — BELOW LGB's robust ann ~7.5/IR ~2.55.
+#     So this matches LGB on *signal* but does NOT robustly beat it on *return*.
+#     Prefer LGB for production; treat this as the improved DL baseline.
+#
+# Costs: spot taker 0.05% x2 (Hyperliquid standard fee rate)
+# Train via: run_dl_from_yaml (needs PyTorch — host .venv, not the Docker image)
+# macOS: export OMP_NUM_THREADS=1 KMP_DUPLICATE_LIB_OK=TRUE to avoid the
+#        duplicate-OpenMP segfault (torch libomp vs qlib/lightgbm libomp).
+# =============================================================
+
+qlib_init:
+    provider_uri: "data/qlib_data/hyperliquid"
+    region: cn
+
+data:
+    instruments: all
+
+train:
+    start: "2022-01-01"          # full history -> more samples for the model
+    end: "2025-06-30"
+valid:
+    start: "2025-07-01"
+    end: "2026-01-31"
+test:
+    start: "2026-02-01"
+    end: "2026-06-27"
+
+model:
+    name: ALSTM
+    kwargs:
+        # d_feat is auto-set from dataset.feature_cols in run_dl_from_yaml
+        # (=158 for "all"); leaving it here is harmless and just documents intent.
+        d_feat: 158
+        hidden_size: 64         # attention-LSTM: moderate recurrent capacity
+        num_layers: 2
+        dropout: 0.2            # 0.2-0.3 best on the full feature set
+        n_epochs: 100
+        lr: 0.0001             # low lr is essential; higher collapses IC
+        early_stop: 30          # noisy validation -> generous patience
+        batch_size: 800
+        metric: loss
+        loss: mse
+        seed: 42                # reproducible; NB single-seed return is noisy
+        n_jobs: 0               # macOS: 0 workers avoids per-epoch spawn overhead
+        GPU: 0                  # falls back to CPU / MPS when CUDA is unavailable
+
+dataset:
+    step_len: 20               # temporal lookback window
+    feature_cols: all          # all 158 Alpha158 features (vs the nn20 subset)
+
+strategy:
+    class: TopkDropoutStrategy
+    module_path: qlib.contrib.strategy.signal_strategy
+    kwargs:
+        signal: <PRED>
+        topk: 12
+        n_drop: 1               # low rotation: churn costs dominate on thin books
+        hold_thresh: 2
+        risk_degree: 0.95
+
+backtest:
+    benchmark: BTC
+    account: 1000000
+    freq: day
+    exchange_kwargs:
+        freq: day
+        limit_threshold: 1.0
+        deal_price: close
+        open_cost: 0.0005            # Hyperliquid taker 0.05%
+        close_cost: 0.0005           # Hyperliquid taker 0.05%
+        min_cost: 0
