@@ -218,6 +218,7 @@ class QuantExperiment:
         strategy_config: Optional[dict] = None,
         backtest_params: Optional[dict] = None,
         experiment_name: str = "orange_quant_exp",
+        ensemble_config: Optional[dict] = None,
     ):
         self.provider_uri = str(Path(provider_uri).expanduser())
         self.region = region
@@ -233,6 +234,7 @@ class QuantExperiment:
         self.strategy_config = strategy_config or {}
         self.backtest_params = backtest_params or {}
         self.experiment_name = experiment_name
+        self.ensemble_config = ensemble_config or {}
 
     @classmethod
     def from_yaml(cls, config_path: str, experiment_name: Optional[str] = None) -> "QuantExperiment":
@@ -263,6 +265,7 @@ class QuantExperiment:
             strategy_config=strategy_cfg,
             backtest_params=backtest_cfg,
             experiment_name=experiment_name or f"{Path(config_path).stem}_exp",
+            ensemble_config=model_cfg.get("ensemble", {}),
         )
 
     def run(self) -> dict:
@@ -294,8 +297,26 @@ class QuantExperiment:
         print(f"[experiment] Dataset built: train={self.train_start}~{self.train_end}, "
               f"valid={self.valid_start}~{self.valid_end}, test={self.test_start}~{self.test_end}")
 
-        model = LGBModel(**self.model_params)
-        model.fit(dataset)
+        n_seeds = int(self.ensemble_config.get("n_seeds", 1) or 1)
+        if n_seeds > 1:
+            # Seed-bagged ensemble: train n_seeds LGBModels with different seeds
+            # and average their signals. Reduces cross-sectional signal variance,
+            # which robustly lifts Rank IC out-of-sample (see orange_quant.ensemble).
+            from orange_quant.ensemble import EnsembleLGB
+            base_seed = int(self.model_params.get("seed", 0))
+            submodels = []
+            for i in range(n_seeds):
+                params = dict(self.model_params)
+                params["seed"] = base_seed + i
+                print(f"[experiment] Training ensemble member {i + 1}/{n_seeds} "
+                      f"(seed={params['seed']})")
+                m = LGBModel(**params)
+                m.fit(dataset)
+                submodels.append(m)
+            model = EnsembleLGB(submodels)
+        else:
+            model = LGBModel(**self.model_params)
+            model.fit(dataset)
         predictions = model.predict(dataset, segment="test")
 
         # End any mlflow run started during data loading to avoid nested-run conflicts
