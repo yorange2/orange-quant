@@ -15,7 +15,10 @@ services:
 
     # Rebalance daily at 00:15 UTC (08:15 Beijing time) by default
     # Uses LightGBM model predictions; remove --model if not needed (falls back to the momentum strategy)
-    command: ["--retrain", "--hour", "0", "--minute", "11", "--model", "models/binance-lgb-momtopk.pkl"]
+    # --n-drop/--hold-thresh: Binance ignores the config's rotation and defaults to
+    # full daily rotation; these flags switch it to partial rotation (higher IR, ~half
+    # the turnover/cost in backtest across both OOS windows).
+    command: ["--retrain", "--hour", "0", "--minute", "11", "--model", "models/binance-lgb-momtopk.pkl", "--n-drop", "5", "--hold-thresh", "2"]
 
     profiles:
       - live

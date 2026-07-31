@@ -100,7 +100,16 @@ class ModelPredictor:
         end = str(raw_df["date"].max().strftime("%Y-%m-%d"))
 
         try:
-            qlib.init(provider_uri=self.provider_uri, region="cn", auto_mount=False)
+            # kernels=1 forces single-process Alpha158 feature computation. The
+            # daily loop installs a SIGTERM/SIGINT handler (server.on_signal) that
+            # only sets a shutdown flag; qlib's default multiprocessing pool forks
+            # workers that INHERIT that handler, so on pool teardown the workers
+            # catch SIGTERM, log "shutting down safely" and refuse to exit — leaving
+            # the parent blocked forever in wait() (a hard deadlock, seen on the
+            # 129-coin Binance rebalance). Single-process prediction avoids the fork
+            # pool entirely; ~130 coins once/day is only a few minutes.
+            qlib.init(provider_uri=self.provider_uri, region="cn",
+                      auto_mount=False, kernels=1)
         except Exception:
             pass
 
