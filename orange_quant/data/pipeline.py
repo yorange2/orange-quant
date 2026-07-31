@@ -72,13 +72,22 @@ def load_coins(source: DataSource) -> list:
         return list(source.fallback_coins)
 
 
-def _rebuild_qlib(source: DataSource):
-    """Rebuild qlib binaries from the raw CSVs, returns (coins, sorted_dates)."""
+def _rebuild_qlib(source: DataSource, keep=None):
+    """Rebuild qlib binaries from the raw CSVs, returns (coins, sorted_dates).
+
+    ``keep`` (optional): restrict the qlib universe to this set of coins. Raw
+    CSVs for coins outside it stay on disk but are left out of instruments/
+    features — used to drop coins that have fallen below the liquidity floor so
+    they no longer pollute training / backtest / live selection. When None
+    (default), every downloaded CSV is included (unchanged behaviour).
+    """
     import numpy as np
     qlib_dir = source.qlib_dir
     qlib_dir.mkdir(parents=True, exist_ok=True)
 
     coins = sorted([f.stem for f in source.raw_dir.glob("*.csv")])
+    if keep is not None:
+        coins = [c for c in coins if c in keep]
     all_dates = set()
     inst_lines = []
 
@@ -124,8 +133,15 @@ def _rebuild_qlib(source: DataSource):
 
 
 def rebuild_data(source: DataSource, top: int = 50, start: str = "2020-01-01",
-                 force_download: bool = False):
-    """Incrementally download data and rebuild qlib binaries."""
+                 force_download: bool = False, restrict_to_top: bool = False):
+    """Incrementally download data and rebuild qlib binaries.
+
+    ``restrict_to_top``: when True, the rebuilt qlib universe is limited to the
+    coins ``get_top_symbols`` currently returns (i.e. those still above the
+    exchange's liquidity floor), so coins that have dropped off the ranking are
+    excluded from instruments/features even though their CSVs remain on disk.
+    When False (default), all downloaded CSVs are included — unchanged.
+    """
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     end_ms = int(time.time() * 1000)
     start_ms = _date_to_ms(start)
@@ -189,7 +205,10 @@ def rebuild_data(source: DataSource, top: int = 50, start: str = "2020-01-01",
     print(f"\n  Total {total} daily bars ({new_total} newly added this run)")
 
     print("\n[Step 2/3] Rebuilding qlib binaries...")
-    coins, dates = _rebuild_qlib(source)
+    keep = {coin for _, coin in pairs} if restrict_to_top else None
+    if keep is not None:
+        print(f"  Restricting universe to {len(keep)} coins above the liquidity floor")
+    coins, dates = _rebuild_qlib(source, keep=keep)
     if not coins:
         print("\n⚠ No data files, skipping rebuild")
         return

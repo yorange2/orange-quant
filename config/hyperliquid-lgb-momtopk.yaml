@@ -42,8 +42,12 @@ strategy:
     module_path: qlib.contrib.strategy.signal_strategy
     kwargs:
         signal: <PRED>
-        topk: 12
-        n_drop: 3               # higher rotation: fresher signal lifts IR and halves drawdown OOS (costs are only 0.05%)
+        # On the liquidity-floored 21-coin universe, concentrating to topk=3 is the
+        # most robust across both OOS windows (least underperformance vs BTC in the
+        # alt-bear valid window); low n_drop keeps churn down on thin books.
+        # NOTE: only 3 positions => high single-name concentration risk.
+        topk: 3
+        n_drop: 1
         hold_thresh: 2
         risk_degree: 0.95
 
