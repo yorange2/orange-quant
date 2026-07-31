@@ -13,6 +13,7 @@ Usage:
     python -m hyperliquid_lgb_momtopk.data.build --force   # force a full re-download
 """
 
+import os
 import time
 import argparse
 from pathlib import Path
@@ -26,6 +27,16 @@ _REQUEST_DELAY = 0.3
 # Stablecoins / fiat-pegged bases to exclude from the universe
 _SKIP_BASES = {"USDT", "USDE", "USDH", "USDHL", "FEUSD", "USR", "DAI", "BUIDL", "USDXL"}
 _FALLBACK = ["HYPE", "PURR", "BTC", "ETH", "SOL"]
+
+# Liquidity floor: drop coins whose 24h USDC quote volume is below this. Most of
+# Hyperliquid spot is near-zero-volume zombie pairs (median ~$900/day) that only
+# inflate backtests and can't be traded live. $25k/day keeps ~21 tradable coins.
+# Override via env for tuning.
+_MIN_QUOTE_VOLUME = float(os.environ.get("HL_MIN_QUOTE_VOLUME", "25000"))
+# Safety floor so a market-wide volume dip can never collapse the universe below
+# a workable size (topk selection needs room). If fewer coins clear the volume
+# floor, fall back to the top-N by volume regardless.
+_MIN_UNIVERSE = int(os.environ.get("HL_MIN_UNIVERSE", "15"))
 
 _exchange = None
 
@@ -63,7 +74,12 @@ def get_top_symbols(n: int = 50) -> list:
         ranked.append((sym, base, float(vol)))
 
     ranked.sort(key=lambda x: x[2], reverse=True)
-    return [(sym, base) for sym, base, _ in ranked[:n]]
+    # Apply the liquidity floor, but never let the universe fall below
+    # _MIN_UNIVERSE (fall back to the top-N by volume if too few clear it).
+    liquid = [r for r in ranked if r[2] >= _MIN_QUOTE_VOLUME]
+    if len(liquid) < _MIN_UNIVERSE:
+        liquid = ranked[:_MIN_UNIVERSE]
+    return [(sym, base) for sym, base, _ in liquid[:n]]
 
 
 def fetch_daily(symbol: str, start_ms: int, end_ms: int) -> list:
@@ -107,8 +123,14 @@ _SOURCE = pipeline.DataSource(
 
 
 def rebuild_data(top: int = 50, start: str = "2020-01-01", force_download: bool = False):
-    """Incrementally download data and rebuild qlib binaries."""
-    return pipeline.rebuild_data(_SOURCE, top=top, start=start, force_download=force_download)
+    """Incrementally download data and rebuild qlib binaries.
+
+    restrict_to_top=True limits the qlib universe to coins currently above the
+    liquidity floor (see get_top_symbols), so zombie pairs that fell off the
+    ranking are dropped from training / backtest / live selection.
+    """
+    return pipeline.rebuild_data(_SOURCE, top=top, start=start,
+                                 force_download=force_download, restrict_to_top=True)
 
 
 def load_coins() -> list:
