@@ -28,4 +28,8 @@ SPEC = ExchangeSpec(
     default_lookback=160,
     default_min_trade=20.0,
     max_position_pct=0.25,
+    # Hold only coins with a positive predicted return; park the rest of the
+    # top-k budget in cash. De-risks in the alt-bear regime where the whole
+    # tradable universe is falling (long-only can't short, so cash is the floor).
+    default_cash_threshold=0.0,
 )

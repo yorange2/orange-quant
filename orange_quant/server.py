@@ -138,7 +138,7 @@ def retrain_model(spec: ExchangeSpec, model_path: str):
 
 
 def run_rebalance(spec, broker, coins, dry_run, topk, risk_degree, n_drop, hold_thresh,
-                  lookback, min_trade, model_path=None):
+                  lookback, min_trade, model_path=None, cash_threshold=None):
     """Execute a single rebalance."""
     try:
         runner = StrategyRunner(
@@ -158,6 +158,7 @@ def run_rebalance(spec, broker, coins, dry_run, topk, risk_degree, n_drop, hold_
             blacklist_path=spec.blacklist_path,
             model_path=model_path,
             state_path=spec.entry_state_path,
+            cash_threshold=cash_threshold,
         )
         result = runner.run_once(dry_run=dry_run)
 
@@ -230,6 +231,9 @@ def run(spec: ExchangeSpec, argv=None):
                         help=f"Minimum trade size in {spec.quote_ccy}")
     parser.add_argument("--model", type=str, default=spec.default_model, help="LightGBM model path")
     parser.add_argument("--retrain", action="store_true", help="Refresh data and retrain the model before rebalancing")
+    parser.add_argument("--cash-threshold", type=float, default=None,
+                        help="Hold only coins scoring above this; park the rest of the top-k "
+                             "budget in cash (default: spec's default_cash_threshold)")
     args = parser.parse_args(argv)
 
     # Fill strategy params from the model's yaml config unless overridden on the CLI
@@ -239,6 +243,7 @@ def run(spec: ExchangeSpec, argv=None):
     topk = args.topk if args.topk is not None else (yaml_topk or spec.default_topk)
     risk_degree = args.risk_degree if args.risk_degree is not None else (yaml_risk or spec.default_risk_degree)
     n_drop, hold_thresh = _resolve_rotation(spec, args, yaml_n_drop, yaml_hold)
+    cash_threshold = args.cash_threshold if args.cash_threshold is not None else spec.default_cash_threshold
 
     global _main_pid
     _main_pid = os.getpid()
@@ -259,6 +264,8 @@ def run(spec: ExchangeSpec, argv=None):
     logger.info(f"   Environment: MAINNET | Mode: {mode}")
     logger.info(f"   Coins: {len(coins)} | TopK: {topk} | Risk degree: {risk_degree}")
     logger.info(f"   Rotation: {rotation} | hold_thresh={hold_thresh}d")
+    if cash_threshold is not None:
+        logger.info(f"   Cash floor: hold only score > {cash_threshold} (else cash)")
     logger.info(f"   Rebalance time: daily at {args.hour:02d}:{args.minute:02d} UTC")
     logger.info("=" * 50)
 
@@ -276,7 +283,8 @@ def run(spec: ExchangeSpec, argv=None):
 
     def _rebalance():
         run_rebalance(spec, broker, coins, args.dry_run, topk, risk_degree, n_drop,
-                      hold_thresh, args.lookback, args.min_trade, args.model)
+                      hold_thresh, args.lookback, args.min_trade, args.model,
+                      cash_threshold=cash_threshold)
 
     if args.once:
         if args.retrain:

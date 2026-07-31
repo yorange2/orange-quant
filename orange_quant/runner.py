@@ -49,6 +49,7 @@ class StrategyRunner:
         blacklist_path: Optional[str] = None,
         model_path: Optional[str] = None,
         state_path: str = "data/entry_dates.json",
+        cash_threshold: Optional[float] = None,
     ):
         """
         Parameters
@@ -83,6 +84,7 @@ class StrategyRunner:
         self.blacklist_path = blacklist_path
         self.model_path = model_path
         self.state_path = Path(state_path)
+        self.cash_threshold = cash_threshold
 
         self.positions: Dict[str, float] = {}
         self.last_rebalance: Optional[datetime] = None
@@ -244,6 +246,15 @@ class StrategyRunner:
 
         # Decide buys/sells (dust: positions worth < min_trade are treated as not held)
         ranked = list(signals["coin"])
+        # Cash floor: only coins scoring above the threshold are eligible to hold;
+        # the rest of the top-k budget stays in cash (de-risking when few coins look
+        # attractive). None => every coin eligible (fully invested, unchanged).
+        if self.cash_threshold is not None:
+            score_by = dict(zip(signals["coin"], signals["score"]))
+            eligible = [c for c in ranked
+                        if score_by.get(c, float("-inf")) > self.cash_threshold]
+        else:
+            eligible = ranked
         current_coins = {
             c for c, amt in current_holdings.items()
             if amt * prices.get(c, 0) >= self.min_trade
@@ -257,7 +268,9 @@ class StrategyRunner:
 
         # Only holdings that fell out of the target top-k are rotation candidates,
         # worst-ranked first, and only after they have aged past hold_thresh.
-        topk_coins = set(ranked[:self.topk])
+        # topk_coins is drawn from the eligible list, so holdings that fell below the
+        # cash threshold drop out of the target and become rotation candidates.
+        topk_coins = set(eligible[:self.topk])
         rank_of = {c: i for i, c in enumerate(ranked)}
         droppable = sorted(
             (c for c in current_coins if c not in topk_coins),
@@ -274,9 +287,11 @@ class StrategyRunner:
             [c for c in droppable if c not in held_too_briefly][:max_drop]
         )
 
-        # Refill up to topk with the best-ranked names we don't already hold
+        # Refill up to topk with the best-ranked ELIGIBLE names we don't already hold.
+        # If fewer than topk coins are eligible, the empty slots stay in cash
+        # (budget is divided by topk in _execute when a cash floor is set).
         slots = max(self.topk - (len(current_coins) - len(to_sell)), 0)
-        to_buy = set([c for c in ranked if c not in current_coins][:slots])
+        to_buy = set([c for c in eligible if c not in current_coins][:slots])
         target_coins = (current_coins - to_sell) | to_buy
 
         print(f"\n📋 Rebalance plan (topk={self.topk} n_drop={self.n_drop} hold_thresh={self.hold_thresh}d):")
@@ -319,8 +334,11 @@ class StrategyRunner:
                 if self.broker.market_sell(coin, amt):
                     trades.append(("SELL", coin, amt))
 
-        # Target per-coin budget: deploy risk_degree of equity, equal-weighted
-        budget_per_coin = (total_equity * self.risk_degree) / max(len(target_coins), 1)
+        # Target per-coin budget: deploy risk_degree of equity, equal-weighted.
+        # With a cash floor, divide by the full topk (not the number of names held),
+        # so unfilled slots stay in cash instead of over-weighting the survivors.
+        denom = self.topk if self.cash_threshold is not None else len(target_coins)
+        budget_per_coin = (total_equity * self.risk_degree) / max(denom, 1)
         budget_per_coin = min(budget_per_coin, total_equity * self.max_position_pct)
 
         # Trim held target positions far above budget, freeing cash for new entrants
