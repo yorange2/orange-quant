@@ -51,3 +51,9 @@ class ExchangeSpec:
     default_lookback: int = 160
     default_min_trade: float = 20.0
     max_position_pct: float = 0.25
+    # Cash floor: coins whose predicted score is <= this are not held; their share
+    # of the top-k budget stays in cash, giving the long-only strategy a de-risking
+    # channel in weak markets. None disables it (fully invested, unchanged). With
+    # an MSE-trained model the score is a return estimate, so 0.0 means "only hold
+    # coins with a positive expected return".
+    default_cash_threshold: Optional[float] = None
