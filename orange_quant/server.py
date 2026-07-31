@@ -11,11 +11,13 @@ serves every venue. Entrypoint: ``run(spec, argv)``.
     run(SPEC)
 """
 
+import os
 import sys
 import time
 import signal
 import logging
 import argparse
+import threading
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -33,6 +35,51 @@ logging.basicConfig(
 logger = logging.getLogger("orange-quant")
 
 _shutdown = False
+# PID of the main server process, captured before any multiprocessing fork so
+# on_signal can tell itself apart from qlib's forked worker processes.
+_main_pid = None
+
+# Liveness heartbeat. The main loop touches this file on every wait tick and
+# around retrain/rebalance; the Docker healthcheck (orange_quant.healthcheck)
+# and the in-process watchdog below read it to detect a hung loop. The timeout
+# must exceed the longest legitimate blocking step (data refresh + ensemble
+# retrain + prediction), so it is deliberately generous.
+_HEARTBEAT_FILE = os.environ.get("OQ_HEARTBEAT_FILE", "/tmp/oq_heartbeat")
+_WATCHDOG_TIMEOUT = int(os.environ.get("OQ_WATCHDOG_TIMEOUT", "1800"))
+
+
+def _beat():
+    """Record a liveness heartbeat (main loop only)."""
+    try:
+        with open(_HEARTBEAT_FILE, "w") as f:
+            f.write(str(int(time.time())))
+    except Exception:
+        pass
+
+
+def _start_watchdog():
+    """Force-exit the process if the main loop stops beating past the timeout.
+
+    A deadlock (e.g. a wedged multiprocessing pool) blocks the main thread in a
+    syscall that releases the GIL, so this daemon thread still runs and can act.
+    Exiting lets Docker's ``restart: unless-stopped`` recover the container —
+    native Docker healthchecks only mark 'unhealthy', they don't restart.
+    """
+    def _watch():
+        while True:
+            time.sleep(30)
+            try:
+                last = int(open(_HEARTBEAT_FILE).read().strip())
+            except Exception:
+                continue
+            age = int(time.time()) - last
+            if age > _WATCHDOG_TIMEOUT:
+                logger.error(
+                    f"⚠ Watchdog: no heartbeat for {age}s (> {_WATCHDOG_TIMEOUT}s); "
+                    f"the loop looks hung — exiting for restart"
+                )
+                os._exit(1)
+    threading.Thread(target=_watch, daemon=True, name="oq-watchdog").start()
 
 
 def load_strategy_defaults(model_path: str):
@@ -52,7 +99,19 @@ def load_strategy_defaults(model_path: str):
 
 
 def on_signal(signum, frame):
+    """Graceful-shutdown handler for the main server process.
+
+    qlib forks a multiprocessing pool (Alpha158 feature computation) during
+    retrain, and the workers inherit this handler. On pool teardown the parent
+    sends them SIGTERM; if a worker runs this handler — which only sets a flag —
+    instead of dying, the parent blocks forever in wait(), a hard deadlock. So
+    in any process that is not the main server, restore the default disposition
+    and terminate, which is exactly what the pool expects.
+    """
     global _shutdown
+    if _main_pid is not None and os.getpid() != _main_pid:
+        signal.signal(signum, signal.SIG_DFL)
+        os._exit(0)
     logger.info(f"Received signal {signum}, shutting down safely...")
     _shutdown = True
 
@@ -181,6 +240,8 @@ def run(spec: ExchangeSpec, argv=None):
     risk_degree = args.risk_degree if args.risk_degree is not None else (yaml_risk or spec.default_risk_degree)
     n_drop, hold_thresh = _resolve_rotation(spec, args, yaml_n_drop, yaml_hold)
 
+    global _main_pid
+    _main_pid = os.getpid()
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
 
@@ -224,6 +285,11 @@ def run(spec: ExchangeSpec, argv=None):
         _rebalance()
         return
 
+    # Liveness: beat once so the heartbeat file exists, then let the watchdog
+    # (and the Docker healthcheck) detect a hung loop from a stale heartbeat.
+    _beat()
+    _start_watchdog()
+
     while not _shutdown:
         now = datetime.utcnow()
         target = now.replace(hour=args.hour, minute=args.minute, second=0, microsecond=0)
@@ -238,13 +304,20 @@ def run(spec: ExchangeSpec, argv=None):
             sleep_time = min(wait_seconds, 60)
             time.sleep(sleep_time)
             wait_seconds -= sleep_time
+            _beat()
 
         if _shutdown:
             break
 
+        # Beat immediately before each long blocking step so the watchdog timer
+        # starts fresh for retrain and for the rebalance (each gets the full
+        # timeout to complete before being judged hung).
         if args.retrain:
+            _beat()
             retrain_model(spec, args.model)
             coins = spec.load_coins()
+        _beat()
         _rebalance()
+        _beat()
 
     logger.info("👋 Server shut down safely")

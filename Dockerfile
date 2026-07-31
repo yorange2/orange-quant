@@ -26,9 +26,10 @@ COPY config/ ./config/
 # Initialize an empty git repo to silence the qlib recorder's git diff warning
 RUN git init && git config user.email "docker@orange-quant" && git config user.name "Docker"
 
-# Health check
-HEALTHCHECK --interval=6h --timeout=30s --retries=3 \
-    CMD python -c "import ccxt; ccxt.binance().load_markets()" || exit 1
+# Health check: liveness of the trading loop (stale heartbeat => unhealthy),
+# not just network connectivity. start-period covers first boot + initial retrain.
+HEALTHCHECK --interval=5m --timeout=10s --start-period=15m --retries=3 \
+    CMD python -m orange_quant.healthcheck || exit 1
 
 # Rebalance daily at 00:15 UTC
 ENTRYPOINT ["python", "-m", "biance_lgb_momtopk.server"]
