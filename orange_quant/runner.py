@@ -209,6 +209,16 @@ class StrategyRunner:
         prices = {}
         if holding_coins:
             prices = self.broker.get_current_prices(holding_coins)
+            # Price-fetch guard: if we hold coins but can't get their prices (e.g.
+            # a rate-limit 429 returns {} or zeros), equity is badly under-counted
+            # and every downstream budget/order size is wrong. Abort this rebalance
+            # rather than trade on bad data — the next scheduled run will retry.
+            missing = [c for c in holding_coins if prices.get(c, 0) <= 0]
+            if missing:
+                print(f"[runner] ❌ Aborting rebalance: no valid price for "
+                      f"{len(missing)}/{len(holding_coins)} held coins {missing[:8]} "
+                      f"(likely rate-limited). No orders placed.")
+                return {"status": "price_error", "missing": missing}
 
         holdings_value = 0.0
         print(f"\n💰 {self.quote_ccy} balance: {cash_balance:.2f}")

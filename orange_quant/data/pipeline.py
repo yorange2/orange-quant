@@ -72,6 +72,32 @@ def load_coins(source: DataSource) -> list:
         return list(source.fallback_coins)
 
 
+def _stable_liquid_coins(source: DataSource, min_avg_quote_vol: float,
+                         min_history_days: int, lookback: int = 30) -> set:
+    """Coins with enough history AND enough *sustained* liquidity, computed from
+    the already-downloaded CSVs (no extra API calls).
+
+    Uses the trailing ``lookback``-day average quote volume (volume * close)
+    instead of a live 24h snapshot, so freshly-listed meme coins whose live
+    volume spikes into the ranking for a day — but whose sustained liquidity is
+    negligible — are excluded. ``min_history_days`` additionally drops coins too
+    new to have reliable features.
+    """
+    keep = set()
+    for f in source.raw_dir.glob("*.csv"):
+        try:
+            df = pd.read_csv(f)
+        except Exception:
+            continue
+        if len(df) < min_history_days or "volume" not in df or "close" not in df:
+            continue
+        recent = df.tail(lookback)
+        avg_qv = float((recent["volume"] * recent["close"]).mean())
+        if avg_qv >= min_avg_quote_vol:
+            keep.add(f.stem)
+    return keep
+
+
 def _rebuild_qlib(source: DataSource, keep=None):
     """Rebuild qlib binaries from the raw CSVs, returns (coins, sorted_dates).
 
@@ -133,13 +159,16 @@ def _rebuild_qlib(source: DataSource, keep=None):
 
 
 def rebuild_data(source: DataSource, top: int = 50, start: str = "2020-01-01",
-                 force_download: bool = False, restrict_to_top: bool = False):
+                 force_download: bool = False, restrict_to_top: bool = False,
+                 min_history_days: int = 0, min_avg_quote_vol: float = 0.0):
     """Incrementally download data and rebuild qlib binaries.
 
-    ``restrict_to_top``: when True, the rebuilt qlib universe is limited to the
-    coins ``get_top_symbols`` currently returns (i.e. those still above the
-    exchange's liquidity floor), so coins that have dropped off the ranking are
-    excluded from instruments/features even though their CSVs remain on disk.
+    ``restrict_to_top``: when True, the rebuilt qlib universe is limited to
+    coins with ``>= min_history_days`` of history AND a trailing-30-day average
+    quote volume ``>= min_avg_quote_vol`` (computed from the CSVs). This uses
+    *sustained* liquidity, not a live 24h snapshot, so a meme coin whose volume
+    spikes for a single day cannot enter the tradable universe. Coins that fell
+    off keep their CSVs on disk but are excluded from instruments/features.
     When False (default), all downloaded CSVs are included — unchanged.
     """
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -205,9 +234,13 @@ def rebuild_data(source: DataSource, top: int = 50, start: str = "2020-01-01",
     print(f"\n  Total {total} daily bars ({new_total} newly added this run)")
 
     print("\n[Step 2/3] Rebuilding qlib binaries...")
-    keep = {coin for _, coin in pairs} if restrict_to_top else None
-    if keep is not None:
-        print(f"  Restricting universe to {len(keep)} coins above the liquidity floor")
+    if restrict_to_top:
+        keep = _stable_liquid_coins(source, min_avg_quote_vol, min_history_days)
+        print(f"  Restricting universe to {len(keep)} coins "
+              f"(>= {min_history_days}d history AND >= ${min_avg_quote_vol:,.0f}/day "
+              f"30d-avg quote volume): {sorted(keep)}")
+    else:
+        keep = None
     coins, dates = _rebuild_qlib(source, keep=keep)
     if not coins:
         print("\n⚠ No data files, skipping rebuild")

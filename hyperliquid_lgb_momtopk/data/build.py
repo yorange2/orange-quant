@@ -38,6 +38,15 @@ _MIN_QUOTE_VOLUME = float(os.environ.get("HL_MIN_QUOTE_VOLUME", "25000"))
 # floor, fall back to the top-N by volume regardless.
 _MIN_UNIVERSE = int(os.environ.get("HL_MIN_UNIVERSE", "15"))
 
+# Sustained-liquidity filter for the tradable universe (applied at rebuild time
+# from the downloaded CSVs, NOT the live 24h snapshot). A coin must have at least
+# _MIN_HISTORY_DAYS of bars AND a trailing-30-day average quote volume >=
+# _MIN_AVG_QUOTE_VOL. This is what keeps single-day meme-coin volume spikes
+# (FUCKY/MAGA/FXRP/GPT…) out of the universe; the live floor above only controls
+# what gets downloaded. ~16 coins clear 90d / $50k today.
+_MIN_HISTORY_DAYS = int(os.environ.get("HL_MIN_HISTORY_DAYS", "90"))
+_MIN_AVG_QUOTE_VOL = float(os.environ.get("HL_MIN_AVG_QUOTE_VOL", "50000"))
+
 _exchange = None
 
 
@@ -130,7 +139,9 @@ def rebuild_data(top: int = 50, start: str = "2020-01-01", force_download: bool 
     ranking are dropped from training / backtest / live selection.
     """
     return pipeline.rebuild_data(_SOURCE, top=top, start=start,
-                                 force_download=force_download, restrict_to_top=True)
+                                 force_download=force_download, restrict_to_top=True,
+                                 min_history_days=_MIN_HISTORY_DAYS,
+                                 min_avg_quote_vol=_MIN_AVG_QUOTE_VOL)
 
 
 def load_coins() -> list:
