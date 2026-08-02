@@ -19,11 +19,12 @@ from pathlib import Path
 
 import requests
 
-from orange_quant.data import pipeline
+from orange_quant.data import hourly, pipeline
 
 _BINANCE_API = "https://api.binance.com/api/v3"
 RAW_DIR = Path("data/binance_raw")
 QLIB_DIR = Path("data/qlib_data/binance")
+HOURLY_DIR = Path("data/binance_hourly")
 _REQUEST_DELAY = 0.3
 
 _SKIP = {
@@ -62,8 +63,9 @@ def get_top_symbols(n: int = 50) -> list:
     return result
 
 
-def fetch_daily(symbol: str, start_ms: int, end_ms: int) -> list:
-    """Fetch daily bars from the Binance API (auto-paginated).
+def _fetch_klines(symbol: str, interval: str, step_ms: int,
+                  start_ms: int, end_ms: int) -> list:
+    """Fetch klines from the Binance API (auto-paginated).
 
     Returns uniform rows [timestamp_ms, open, high, low, close, volume] for bars
     that have already closed (Binance closeTime <= now).
@@ -71,7 +73,7 @@ def fetch_daily(symbol: str, start_ms: int, end_ms: int) -> list:
     all_candles = []
     batch_start = start_ms
     while batch_start < end_ms:
-        params = {"symbol": symbol, "interval": "1d",
+        params = {"symbol": symbol, "interval": interval,
                   "startTime": batch_start, "endTime": end_ms, "limit": 1000}
         try:
             resp = requests.get(f"{_BINANCE_API}/klines", params=params, timeout=30)
@@ -86,12 +88,31 @@ def fetch_daily(symbol: str, start_ms: int, end_ms: int) -> list:
         last_time = data[-1][0]
         if last_time <= batch_start:
             break
-        batch_start = last_time + 86400000
+        batch_start = last_time + step_ms
         time.sleep(_REQUEST_DELAY)
 
     # Keep only closed bars, and reshape kline -> uniform [ts, o, h, l, c, v]
     now_ms = int(time.time() * 1000)
     return [[c[0], c[1], c[2], c[3], c[4], c[5]] for c in all_candles if c[6] <= now_ms]
+
+
+def fetch_daily(symbol: str, start_ms: int, end_ms: int) -> list:
+    """Fetch daily bars (uniform rows, closed bars only)."""
+    return _fetch_klines(symbol, "1d", 86400000, start_ms, end_ms)
+
+
+def fetch_hourly(symbol: str, start_ms: int, end_ms: int) -> list:
+    """Fetch 1h bars (uniform rows, closed bars only).
+
+    Binance paginates back to listing, so the full history is available — this
+    is what the phase resampler in ``orange_quant.data.hourly`` builds on.
+    """
+    return _fetch_klines(symbol, "1h", 3600000, start_ms, end_ms)
+
+
+def resolve_symbols(coins) -> dict:
+    """coin -> Binance REST symbol. Every USDT pair is just <coin>USDT."""
+    return {coin: f"{coin}USDT" for coin in coins}
 
 
 _SOURCE = pipeline.DataSource(
@@ -101,6 +122,18 @@ _SOURCE = pipeline.DataSource(
     get_top_symbols=get_top_symbols,
     fetch_daily=fetch_daily,
     fallback_coins=_FALLBACK,
+)
+
+
+HOURLY_SOURCE = hourly.HourlySource(
+    label="Binance",
+    hourly_dir=HOURLY_DIR,
+    daily_qlib_dir=QLIB_DIR,
+    daily_raw_dir=RAW_DIR,
+    phase_raw_tmpl="data/binance_phase{phase:02d}_raw",
+    phase_qlib_tmpl="data/qlib_data/binance_h{phase:02d}",
+    fetch_hourly=fetch_hourly,
+    resolve_symbols=resolve_symbols,
 )
 
 

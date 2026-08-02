@@ -18,10 +18,11 @@ import time
 import argparse
 from pathlib import Path
 
-from orange_quant.data import pipeline
+from orange_quant.data import hourly, pipeline
 
 RAW_DIR = Path("data/hyperliquid_raw")
 QLIB_DIR = Path("data/qlib_data/hyperliquid")
+HOURLY_DIR = Path("data/hyperliquid_hourly")
 _REQUEST_DELAY = 0.3
 
 # Stablecoins / fiat-pegged bases to exclude from the universe
@@ -121,6 +122,46 @@ def fetch_daily(symbol: str, start_ms: int, end_ms: int) -> list:
     return [r for r in all_rows if r[0] + 86400000 <= now_ms]
 
 
+def fetch_hourly(symbol: str, start_ms: int, end_ms: int) -> list:
+    """Fetch 1h spot candles via ccxt (auto-paginated).
+
+    NOTE: Hyperliquid only retains roughly the last 5000 hourly candles (~208
+    days). It clamps ``since`` to that window and returns nothing for earlier
+    ranges, so phase datasets built from this cover a recent window only — far
+    short of the configured 2022-2025 train split. Use Binance for the phase
+    study; this exists so a recent-window sanity check is possible on HL too.
+    """
+    ex = _get_exchange()
+    all_rows = []
+    batch_start = start_ms
+
+    while batch_start < end_ms:
+        try:
+            rows = ex.fetch_ohlcv(symbol, "1h", since=batch_start, limit=5000)
+        except Exception as e:
+            print(f"  API err: {e}")
+            break
+
+        if not rows:
+            break
+
+        all_rows.extend(rows)
+        last_time = rows[-1][0]
+        if last_time <= batch_start:
+            break
+        batch_start = last_time + 3600000
+        time.sleep(_REQUEST_DELAY)
+
+    now_ms = int(time.time() * 1000)
+    return [r for r in all_rows if r[0] + 3600000 <= now_ms]
+
+
+def resolve_symbols(coins) -> dict:
+    """coin -> ccxt symbol (e.g. BTC -> UBTC/USDC), from the live pair list."""
+    wanted = set(coins)
+    return {coin: sym for sym, coin in get_top_symbols(500) if coin in wanted}
+
+
 _SOURCE = pipeline.DataSource(
     label="Hyperliquid",
     raw_dir=RAW_DIR,
@@ -128,6 +169,18 @@ _SOURCE = pipeline.DataSource(
     get_top_symbols=get_top_symbols,
     fetch_daily=fetch_daily,
     fallback_coins=_FALLBACK,
+)
+
+
+HOURLY_SOURCE = hourly.HourlySource(
+    label="Hyperliquid",
+    hourly_dir=HOURLY_DIR,
+    daily_qlib_dir=QLIB_DIR,
+    daily_raw_dir=RAW_DIR,
+    phase_raw_tmpl="data/hyperliquid_phase{phase:02d}_raw",
+    phase_qlib_tmpl="data/qlib_data/hyperliquid_h{phase:02d}",
+    fetch_hourly=fetch_hourly,
+    resolve_symbols=resolve_symbols,
 )
 
 

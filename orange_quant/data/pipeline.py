@@ -158,6 +158,16 @@ def _rebuild_qlib(source: DataSource, keep=None):
     return coins, sorted_dates
 
 
+def rebuild_qlib(source: DataSource, keep=None):
+    """Rebuild qlib binaries from raw CSVs that are already on disk (no download).
+
+    Used by callers that produce their own CSVs — e.g. the phase resampler in
+    ``orange_quant.data.hourly``, which derives daily bars from 1h data instead
+    of downloading them.
+    """
+    return _rebuild_qlib(source, keep=keep)
+
+
 def rebuild_data(source: DataSource, top: int = 50, start: str = "2020-01-01",
                  force_download: bool = False, restrict_to_top: bool = False,
                  min_history_days: int = 0, min_avg_quote_vol: float = 0.0):
