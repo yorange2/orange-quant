@@ -304,15 +304,21 @@ def run(spec: ExchangeSpec, argv=None):
         if target <= now:
             target += timedelta(days=1)
 
-        wait_seconds = (target - now).total_seconds()
         logger.info(f"⏰ Next rebalance: {target.strftime('%Y-%m-%d %H:%M:%S')} UTC "
-                    f"(waiting {wait_seconds/3600:.1f}h)")
+                    f"(waiting {(target - now).total_seconds()/3600:.1f}h)")
 
-        while wait_seconds > 0 and not _shutdown:
-            sleep_time = min(wait_seconds, 60)
-            time.sleep(sleep_time)
-            wait_seconds -= sleep_time
+        # Wall-clock wait: re-read real UTC each tick and compare against target,
+        # instead of counting down a decrementing timer. A container that gets
+        # suspended/paused (or a clock jump) can't drift past the scheduled time —
+        # on resume we see now >= target and run immediately. On a fresh start the
+        # already-passed time-of-day is rolled to tomorrow above, so a restart does
+        # NOT replay a missed run; only a live suspend-then-resume catches up once.
+        while not _shutdown:
             _beat()
+            now = datetime.utcnow()
+            if now >= target:
+                break
+            time.sleep(min((target - now).total_seconds(), 60))
 
         if _shutdown:
             break
