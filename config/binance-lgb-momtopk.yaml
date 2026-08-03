@@ -47,10 +47,15 @@ strategy:
     module_path: qlib.contrib.strategy.signal_strategy
     kwargs:
         signal: <PRED>
-        topk: 10               # concentrate to top 10 (best OOS IR; also eases min-notional on a small account)
-        n_drop: 5               # partial rotation (see compose --n-drop/--hold-thresh; live must be told, it defaults to full rotation)
+        # Chosen for phase robustness, not peak return: across day-boundary phases
+        # 0/6/12/18 the topk=20..30 x n_drop=1 block is the only stable region in the
+        # grid (worst phase +31%..+35%, worst IR > 1.0 in all four cells). The old
+        # topk=10/n_drop=5 earned a higher mean (+79.8% vs +67.5%) but its worst phase
+        # was -17.6% at IR -0.44. See scripts/strategy_sweep.py.
+        topk: 20                # needs equity > ~$571 to clear runner.py's $20 min_trade at risk_degree 0.70
+        n_drop: 1               # backtest only — live Binance reads compose's --n-drop (honor_config_rotation=False)
         hold_thresh: 2
-        risk_degree: 0.95
+        risk_degree: 0.70
 
 backtest:
     benchmark: BTC

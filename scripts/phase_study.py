@@ -157,6 +157,15 @@ def main():
     df = pd.DataFrame(rows).sort_values("phase").reset_index(drop=True)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out = RESULTS_DIR / f"{base_config}-phases.csv"
+
+    # Merge rather than overwrite: a rerun of a subset (--phases 0, or a retry
+    # of one failure) would otherwise silently discard every other phase's
+    # result, and this file is what strategy_sweep's calibration check anchors
+    # against. Freshly computed rows win on collision.
+    if out.exists():
+        prior = pd.read_csv(out)
+        df = (pd.concat([prior[~prior["phase"].isin(df["phase"])], df])
+              .sort_values("phase").reset_index(drop=True))
     df.to_csv(out, index=False)
 
     print("\n" + "=" * 60)
