@@ -57,6 +57,39 @@ WINDOWS_BY_NAME = {w["name"]: w for w in WINDOWS}
 BASELINE_WINDOW = "D"  # the one whose splits match config/*.yaml
 
 
+def quarterly_windows(first="2022-01-01", last="2026-06-30",
+                      valid_months=6, train_start="2020-01-01"):
+    """Rolling 3-month test windows, each with its own expanding train segment.
+
+    A/B/C/D give only four out-of-sample observations, which is far too few to
+    fit anything regime-related on without repeating the single-window mistake
+    at a larger scale. Quarterly steps turn the same history into ~18 windows.
+    Every window keeps ``valid`` immediately before ``test`` and trains on
+    everything before that, so no window ever sees its own test period.
+    """
+    out, start = [], pd.Timestamp(first)
+    last = pd.Timestamp(last)
+    while start <= last:
+        test_end = start + pd.DateOffset(months=3) - pd.Timedelta(days=1)
+        if test_end > last:
+            break
+        valid_start = start - pd.DateOffset(months=valid_months)
+        out.append({
+            "name": f"{start.year}Q{(start.month - 1) // 3 + 1}",
+            "train": {"start": train_start,
+                      "end": str((valid_start - pd.Timedelta(days=1)).date())},
+            "valid": {"start": str(valid_start.date()),
+                      "end": str((start - pd.Timedelta(days=1)).date())},
+            "test":  {"start": str(start.date()), "end": str(test_end.date())},
+        })
+        start += pd.DateOffset(months=3)
+    return out
+
+
+QUARTERLY = quarterly_windows()
+WINDOWS_BY_NAME.update({w["name"]: w for w in QUARTERLY})
+
+
 def load_config(name: str) -> dict:
     with open(f"config/{name}.yaml") as f:
         return yaml.safe_load(f)
@@ -226,7 +259,11 @@ def main():
                              f"(default: {BASELINE_WINDOW}, the config's own splits)")
     args = parser.parse_args()
 
-    windows = [WINDOWS_BY_NAME[w.strip()] for w in args.windows.split(",") if w.strip()]
+    if args.windows.strip().lower() == "quarterly":
+        windows = QUARTERLY
+    else:
+        windows = [WINDOWS_BY_NAME[w.strip()]
+                   for w in args.windows.split(",") if w.strip()]
 
     phases = [int(p) for p in args.phases.split(",") if p.strip()]
     topks = [int(t) for t in args.topk.split(",") if t.strip()]
