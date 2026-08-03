@@ -42,6 +42,7 @@ import pandas as pd
 from orange_quant.data import pipeline
 
 _HOUR_MS = 3_600_000
+_DAY_MS = 86_400_000
 _REQUEST_DELAY = 0.3
 
 # Same field order as the daily CSVs written by pipeline.candles_to_csv
@@ -75,6 +76,20 @@ class HourlySource:
 def _date_to_ms(date_str: str) -> int:
     dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     return int(dt.timestamp() * 1000)
+
+
+def _native_start_ms(source: HourlySource, coin: str, default_ms: int) -> int:
+    """First date in the coin's native daily CSV — i.e. when it actually listed."""
+    if source.daily_raw_dir is None:
+        return default_ms
+    path = source.daily_raw_dir / f"{coin}.csv"
+    if not path.exists():
+        return default_ms
+    try:
+        first = pd.read_csv(path, usecols=["date"], nrows=1)["date"].iloc[0]
+        return _date_to_ms(str(first))
+    except Exception:
+        return default_ms
 
 
 def _rows_to_frame(rows: list) -> pd.DataFrame:
@@ -114,8 +129,17 @@ def download_hourly(source: HourlySource, coins: Sequence[str],
                     start: str = "2020-01-01", force: bool = False) -> dict:
     """Incrementally download 1h bars for ``coins`` into ``source.hourly_dir``.
 
-    Resumes from each CSV's last stored hour unless ``force``. Returns
-    {coin: bar_count}; coins with no data are omitted.
+    Resumes from each CSV's last stored hour, but *only* when the stored series
+    already reaches back to ``start``: resuming forward from a series that begins
+    late would leave the earlier history permanently missing, since nothing else
+    ever looks backwards. A coin stored from a later start is re-fetched in full.
+    ``force`` re-fetches everything regardless.
+
+    A coin whose fetch fails is left exactly as it was on disk rather than being
+    overwritten with a partial series — a truncated history is worse than a
+    missing one, because it still looks like data downstream.
+
+    Returns {coin: bar_count}; coins with no data are omitted.
     """
     source.hourly_dir.mkdir(parents=True, exist_ok=True)
     symbols = source.resolve_symbols(coins)
@@ -126,25 +150,52 @@ def download_hourly(source: HourlySource, coins: Sequence[str],
     if missing:
         print(f"  ⚠ No exchange symbol for {len(missing)} coins, skipping: {missing}")
 
-    counts = {}
+    counts, failed, backfilled = {}, [], []
     for i, coin in enumerate(coins):
         symbol = symbols.get(coin)
         if symbol is None:
             continue
 
+        # How far back this coin *can* go: most were listed after `start`, so
+        # comparing against `start` alone would re-fetch them on every run. The
+        # native daily CSV records the real listing date, so use it as the floor.
+        expected_start_ms = max(start_ms, _native_start_ms(source, coin, start_ms))
+
         existing = None if force else load_hourly(source, coin)
         if existing is not None:
+            first_ms = int(existing["datetime"].iloc[0].timestamp() * 1000)
             last_ms = int(existing["datetime"].iloc[-1].timestamp() * 1000)
-            if last_ms + 2 * _HOUR_MS >= end_ms:
+            if first_ms > expected_start_ms + _DAY_MS:
+                # Stored series starts late — refetch from `start`. A coin listed
+                # after `start` simply returns the same span again.
+                print(f"  [{i+1}/{len(coins)}] {coin:10s} stored from "
+                      f"{existing['datetime'].iloc[0]:%Y-%m-%d} but start={start}; "
+                      f"backfilling...", end=" ", flush=True)
+                existing, fetch_from = None, start_ms
+                backfilled.append(coin)
+            elif last_ms + 2 * _HOUR_MS >= end_ms:
                 print(f"  [{i+1}/{len(coins)}] {coin:10s} up to date ({len(existing)} bars)")
                 counts[coin] = len(existing)
                 continue
-            fetch_from = last_ms + _HOUR_MS
+            else:
+                fetch_from = last_ms + _HOUR_MS
+                print(f"  [{i+1}/{len(coins)}] {coin:10s} ({symbol}) fetching...",
+                      end=" ", flush=True)
         else:
             fetch_from = start_ms
+            print(f"  [{i+1}/{len(coins)}] {coin:10s} ({symbol}) fetching...",
+                  end=" ", flush=True)
 
-        print(f"  [{i+1}/{len(coins)}] {coin:10s} ({symbol}) fetching...", end=" ", flush=True)
-        rows = source.fetch_hourly(symbol, fetch_from, end_ms)
+        try:
+            rows = source.fetch_hourly(symbol, fetch_from, end_ms)
+        except Exception as e:  # noqa: BLE001 — isolate one coin's failure
+            print(f"❌ fetch failed, leaving stored data untouched: {e}")
+            failed.append(coin)
+            stored = load_hourly(source, coin)
+            if stored is not None:
+                counts[coin] = len(stored)
+            continue
+
         if not rows:
             print("⚠ no data")
             if existing is not None:
@@ -166,6 +217,13 @@ def download_hourly(source: HourlySource, coins: Sequence[str],
         counts[coin] = len(new_df)
         time.sleep(_REQUEST_DELAY)
 
+    if backfilled:
+        print(f"\n  ↺ backfilled {len(backfilled)} coins whose stored series began "
+              f"after {start}: {backfilled}")
+    if failed:
+        print(f"\n  ❌ {len(failed)} coins failed and keep their previous data "
+              f"(re-run to retry): {failed}")
+
     return counts
 
 
@@ -179,10 +237,18 @@ def resample_phase(hourly: pd.DataFrame, phase: int, min_hours: int = 24) -> pd.
     The bar labelled date ``D`` spans ``[D phase:00, D+1 phase:00)``, so phase 0
     reproduces the exchange's native UTC daily bar (see ``verify_phase0``).
 
-    Buckets with fewer than ``min_hours`` bars are dropped — an incomplete day
+    Buckets with fewer than ``min_hours`` *slots* are dropped — an incomplete day
     would otherwise fabricate an OHLC that no phase actually traded. Since a
     bucket holds at most 24 hourly slots, the default of 24 keeps only fully
     covered days.
+
+    OHLC is taken from hours that actually traded. For an hour with no trades the
+    exchange still emits a synthetic flat bar (O=H=L=C = the previous close,
+    volume 0), and its open is a carried-forward price rather than a real one —
+    Binance's own daily bar ignores those hours when setting open/high/low, and
+    aggregating them would put an untraded placeholder into the OHLC. A day where
+    nothing traded at all keeps its placeholder, so the bar still carries the last
+    known price instead of vanishing. Volume always sums over every slot.
 
     Returns a frame in the daily-CSV schema: date, open, close, high, low,
     volume, factor.
@@ -190,19 +256,21 @@ def resample_phase(hourly: pd.DataFrame, phase: int, min_hours: int = 24) -> pd.
     if not 0 <= phase <= 23:
         raise ValueError(f"phase must be in 0..23, got {phase}")
 
-    df = hourly.sort_values("datetime")
+    df = hourly.sort_values("datetime").copy()
     # Shift back by the phase so ordinary day-flooring lands on the bucket start.
-    bucket = (df["datetime"] - pd.Timedelta(hours=phase)).dt.floor("D")
+    df["_bucket"] = (df["datetime"] - pd.Timedelta(hours=phase)).dt.floor("D")
 
-    out = df.groupby(bucket).agg(
-        open=("open", "first"),
-        close=("close", "last"),
-        high=("high", "max"),
-        low=("low", "min"),
-        volume=("volume", "sum"),
-        hours=("close", "size"),
-    )
-    out = out[out["hours"] >= min_hours].drop(columns="hours")
+    _OHLC = dict(open=("open", "first"), close=("close", "last"),
+                 high=("high", "max"), low=("low", "min"))
+
+    slots = df.groupby("_bucket").size()
+    volume = df.groupby("_bucket")["volume"].sum()
+    traded = df[df["volume"] > 0].groupby("_bucket").agg(**_OHLC)
+    placeholder = df.groupby("_bucket").agg(**_OHLC)
+
+    out = traded.reindex(slots.index).fillna(placeholder)
+    out["volume"] = volume
+    out = out[slots >= min_hours]
     out.insert(0, "date", out.index.strftime("%Y-%m-%d"))
     out["factor"] = 1.0
     return out.reset_index(drop=True)
@@ -290,6 +358,57 @@ def build_phase(source: HourlySource, phase: int, coins: Optional[Sequence[str]]
 # --------------------------------------------------------------------------
 # correctness check
 # --------------------------------------------------------------------------
+
+def check_coverage(source: HourlySource, coins: Optional[Sequence[str]] = None,
+                   tol_days: int = 2) -> pd.DataFrame:
+    """Flag hourly series that don't span the coin's native daily history.
+
+    The native daily CSVs are the reference for how much history a coin actually
+    has, so any hourly series starting materially later or ending materially
+    earlier is truncated rather than simply late-listed. This is the check that
+    catches a resumed-but-never-backfilled series and a fetch cut short by a
+    network error — both of which otherwise look like ordinary data downstream.
+
+    Returns one row per coin with a gap; empty means full coverage.
+    """
+    if source.daily_raw_dir is None:
+        raise ValueError(f"{source.label} has no daily_raw_dir to compare against")
+    if coins is None:
+        coins = universe_from_qlib(source.daily_qlib_dir)
+
+    rows = []
+    for coin in coins:
+        daily_path = source.daily_raw_dir / f"{coin}.csv"
+        h = load_hourly(source, coin)
+        if not daily_path.exists():
+            continue
+        if h is None:
+            rows.append({"coin": coin, "hourly_start": None, "hourly_end": None,
+                         "daily_start": None, "daily_end": None,
+                         "missing_start_days": None, "missing_end_days": None})
+            continue
+        daily = pd.read_csv(daily_path)
+        d0 = pd.Timestamp(daily["date"].iloc[0], tz="UTC")
+        d1 = pd.Timestamp(daily["date"].iloc[-1], tz="UTC")
+        h0 = h["datetime"].iloc[0].floor("D")
+        h1 = h["datetime"].iloc[-1].floor("D")
+        miss_start = max((h0 - d0).days, 0)
+        miss_end = max((d1 - h1).days, 0)
+        if miss_start > tol_days or miss_end > tol_days:
+            rows.append({"coin": coin,
+                         "hourly_start": f"{h0:%Y-%m-%d}", "hourly_end": f"{h1:%Y-%m-%d}",
+                         "daily_start": f"{d0:%Y-%m-%d}", "daily_end": f"{d1:%Y-%m-%d}",
+                         "missing_start_days": miss_start, "missing_end_days": miss_end})
+
+    report = pd.DataFrame(rows)
+    print(f"\nhourly coverage vs native daily history ({len(coins)} coins)")
+    if report.empty:
+        print(f"  ✅ every coin covers its full daily span (tol={tol_days}d)")
+    else:
+        print(f"  ❌ {len(report)} coins are truncated — re-run download to repair:")
+        print(report.to_string(index=False))
+    return report
+
 
 def verify_phase0(source: HourlySource, coins: Optional[Sequence[str]] = None,
                   tol: float = 1e-3) -> pd.DataFrame:
@@ -387,7 +506,12 @@ def main():
         total = sum(counts.values())
         print(f"\n✅ {len(counts)} coins, {total:,} hourly bars in {source.hourly_dir}")
     elif args.action == "verify":
+        # Coverage first: phase-0 values can look perfect on a series that is
+        # simply missing years, so span is checked before bar-for-bar accuracy.
+        coverage = check_coverage(source, coins)
         verify_phase0(source, coins)
+        if not coverage.empty:
+            raise SystemExit(1)
     else:
         phases = [int(p) for p in args.phases.split(",") if p.strip()]
         build_phases(source, phases, coins=coins)

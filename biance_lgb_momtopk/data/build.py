@@ -63,24 +63,47 @@ def get_top_symbols(n: int = 50) -> list:
     return result
 
 
+class FetchIncomplete(RuntimeError):
+    """A paginated fetch gave up partway, so the rows collected are truncated."""
+
+
 def _fetch_klines(symbol: str, interval: str, step_ms: int,
-                  start_ms: int, end_ms: int) -> list:
+                  start_ms: int, end_ms: int,
+                  retries: int = 3, strict: bool = False) -> list:
     """Fetch klines from the Binance API (auto-paginated).
 
     Returns uniform rows [timestamp_ms, open, high, low, close, volume] for bars
     that have already closed (Binance closeTime <= now).
+
+    Each page is retried ``retries`` times with linear backoff — a single read
+    timeout mid-pagination would otherwise end the walk early and hand back a
+    silently truncated series. When a page still fails after the retries,
+    ``strict`` decides what that means: raise ``FetchIncomplete`` (callers that
+    must not persist partial history), or keep the lenient behaviour of
+    returning what was collected so far.
     """
     all_candles = []
     batch_start = start_ms
     while batch_start < end_ms:
         params = {"symbol": symbol, "interval": interval,
                   "startTime": batch_start, "endTime": end_ms, "limit": 1000}
-        try:
-            resp = requests.get(f"{_BINANCE_API}/klines", params=params, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as e:
-            print(f"  API err: {e}")
+        data = None
+        for attempt in range(retries):
+            try:
+                resp = requests.get(f"{_BINANCE_API}/klines", params=params, timeout=30)
+                resp.raise_for_status()
+                data = resp.json()
+                break
+            except Exception as e:
+                if attempt == retries - 1:
+                    msg = (f"{symbol} {interval} page at {batch_start} failed after "
+                           f"{retries} attempts: {e}")
+                    if strict:
+                        raise FetchIncomplete(msg) from e
+                    print(f"  API err: {msg}")
+                else:
+                    time.sleep(_REQUEST_DELAY * (attempt + 1) * 5)
+        if data is None:
             break
         if not data or not isinstance(data, list):
             break
@@ -106,8 +129,13 @@ def fetch_hourly(symbol: str, start_ms: int, end_ms: int) -> list:
 
     Binance paginates back to listing, so the full history is available — this
     is what the phase resampler in ``orange_quant.data.hourly`` builds on.
+
+    ``strict``: an hourly series is ~24x longer than the daily one, so it takes
+    ~24x as many pages and is correspondingly likelier to hit a transient error.
+    Storing a truncated series would silently amputate a coin's history, so a
+    page that fails every retry raises instead.
     """
-    return _fetch_klines(symbol, "1h", 3600000, start_ms, end_ms)
+    return _fetch_klines(symbol, "1h", 3600000, start_ms, end_ms, strict=True)
 
 
 def resolve_symbols(coins) -> dict:
