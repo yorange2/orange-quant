@@ -18,7 +18,10 @@ services:
     # --n-drop/--hold-thresh: Binance ignores the config's rotation and defaults to
     # full daily rotation; these flags switch it to partial rotation (higher IR, ~half
     # the turnover/cost in backtest across both OOS windows).
-    command: ["--retrain", "--hour", "0", "--minute", "11", "--model", "models/binance-lgb-momtopk.pkl", "--n-drop", "5", "--hold-thresh", "2"]
+    # n_drop=1 is the slowest partial rotation and the phase-robust choice: less
+    # turnover means less exposure to day-boundary-sensitive entry/exit timing.
+    # topk/risk_degree are NOT here — server.py reads those from the model's yaml.
+    command: ["--retrain", "--hour", "0", "--minute", "11", "--model", "models/binance-lgb-momtopk.pkl", "--n-drop", "1", "--hold-thresh", "2"]
 
     profiles:
       - live

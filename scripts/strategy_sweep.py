@@ -199,6 +199,8 @@ def main():
         print(f"[sweep] phase {phase:02d}: backtesting against "
               f"{phase_provider_uri(args.venue, phase)}")
         for topk, n_drop, rd in product(topks, n_drops, risk_degrees):
+            if n_drop > topk:
+                continue  # cannot drop more names than the book holds
             try:
                 m = run_backtest(signal, config, topk, n_drop, rd)
             except Exception as e:  # noqa: BLE001 — one cell must not lose the grid
