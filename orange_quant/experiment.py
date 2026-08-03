@@ -159,6 +159,27 @@ def _float32_reweighter():
     return _Float32Ones()
 
 
+def _end_active_experiment() -> None:
+    """Close any active mlflow run / qlib experiment so qlib can be re-initialized.
+
+    qlib's RecorderWrapper raises RecorderInitializationError when ``qlib.init``
+    is called while ``exp_manager.active_experiment`` is set. What sets it is
+    training: LGBModel.fit logs its eval metrics through ``R.log_metrics``, which
+    implicitly starts an experiment. (Building a handler does not — a fit is
+    required to reproduce the failure.) Both mlflow and qlib state are cleared
+    here; each step is best-effort because neither may exist on a first call.
+    """
+    try:
+        if mlflow.active_run():
+            mlflow.end_run()
+    except Exception:  # noqa: BLE001 - cleanup must never mask the real work
+        pass
+    try:
+        R.end_exp()
+    except Exception:  # noqa: BLE001 - no active experiment is the normal case
+        pass
+
+
 def _flush_async_metrics(recorder) -> None:
     """Flush qlib's background metric logger before metrics are read back.
 
@@ -268,11 +289,21 @@ class QuantExperiment:
             ensemble_config=model_cfg.get("ensemble", {}),
         )
 
-    def run(self) -> dict:
-        """Execute the full experiment pipeline."""
-        print("\n" + "=" * 60)
-        print("🚀 Orange Quant experiment starting")
-        print("=" * 60 + "\n")
+    def fit_predict(self) -> dict:
+        """Init qlib, build the dataset, train, and predict the test segment.
+
+        Split out of ``run`` so callers that only need a trained model and its
+        test-segment signal — e.g. a strategy sweep, where topk/risk_degree
+        affect only the backtest and not the model — can reuse one training run
+        across many backtests instead of retraining per parameter set.
+
+        Returns {"model", "dataset", "predictions"}; no experiment recording.
+        """
+        # qlib refuses to re-init while an experiment is active, and training
+        # leaves one active. A caller fitting several datasets in one process
+        # (the strategy sweep) would hit RecorderInitializationError on the
+        # call after its first fit, so clear any leftover experiment first.
+        _end_active_experiment()
 
         print(f"[experiment] Initializing qlib, data path: {self.provider_uri}")
         qlib.init(provider_uri=self.provider_uri, region=self.region)
@@ -317,7 +348,19 @@ class QuantExperiment:
         else:
             model = LGBModel(**self.model_params)
             model.fit(dataset)
-        predictions = model.predict(dataset, segment="test")
+
+        return {"model": model, "dataset": dataset,
+                "predictions": model.predict(dataset, segment="test")}
+
+    def run(self) -> dict:
+        """Execute the full experiment pipeline."""
+        print("\n" + "=" * 60)
+        print("🚀 Orange Quant experiment starting")
+        print("=" * 60 + "\n")
+
+        fitted = self.fit_predict()
+        model, dataset = fitted["model"], fitted["dataset"]
+        predictions = fitted["predictions"]
 
         # End any mlflow run started during data loading to avoid nested-run conflicts
         if mlflow.active_run():
