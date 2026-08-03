@@ -139,7 +139,7 @@ def main():
 
     if not args.skip_build:
         from orange_quant.data import hourly
-        source = hourly._get_source(args.venue)
+        source = hourly.get_source(args.venue)
         hourly.build_phases(source, phases)
 
     rows, failed = [], []
