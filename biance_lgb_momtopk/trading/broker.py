@@ -15,6 +15,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from orange_quant import blacklist
+from orange_quant.trading.broker import Broker
 from orange_quant.trading.paper_broker import PaperBroker as _CorePaperBroker
 
 load_dotenv()
@@ -32,7 +33,7 @@ def _make_public_exchange() -> ccxt.binance:
     })
 
 
-class BinanceBroker:
+class BinanceBroker(Broker):
     """Binance live spot trading wrapper (coin-based interface)."""
 
     def __init__(self):

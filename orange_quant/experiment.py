@@ -65,6 +65,12 @@ _DEFAULT_EXCHANGE_KWARGS = {
 def _prefer_mps(model):
     """Move a qlib PyTorch model to the Apple MPS (Metal) GPU when available.
 
+    NOTE (2026-08): qlib now natively resolves ``GPU="mps"`` via
+    ``qlib.contrib.model.pytorch_utils.resolve_device``, so prefer configuring
+    ``GPU: mps`` in the model kwargs. This shim is kept as an idempotent
+    fallback (it no-ops when the model is already on mps) and should be removed
+    once the P1.4 Blocker (qlib PyTorch fit segfault on this env) is resolved.
+
     qlib's PyTorch models only auto-select CUDA-or-CPU (their ``GPU`` kwarg is
     CUDA-only), so on Apple Silicon they train on CPU. Overriding ``model.device``
     and moving the underlying ``nn.Module`` to ``mps`` gives a large speedup. Any

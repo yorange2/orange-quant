@@ -9,6 +9,8 @@ the coin-based broker interface the core runner/predictor expect
 """
 
 from typing import Callable, Dict, List, Optional
+
+from orange_quant.trading.broker import Broker
 from datetime import datetime
 
 import pandas as pd
@@ -16,7 +18,7 @@ import pandas as pd
 _DEFAULT_MIN_NOTIONAL = 10.0
 
 
-class PaperBroker:
+class PaperBroker(Broker):
     def __init__(
         self,
         coins: List[str],
