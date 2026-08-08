@@ -39,7 +39,7 @@ model:
         batch_size: 1024
         metric: loss
         loss: mse
-        GPU: 0                  # falls back to CPU when CUDA is unavailable
+        GPU: mps                # Apple Silicon Metal (native qlib support; CPU-only boxes use GPU: cpu)
 
 dataset:
     step_len: 20               # longer lookback window for temporal context
