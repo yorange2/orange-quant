@@ -200,6 +200,10 @@ Alpha158 输出 float32 → `from_numpy().float()` **同 dtype 不复制**（共
 
 - **P1.4 ✅**：MPS 冒烟单测固化进 `qlib/tests/model/test_pytorch_mps.py`（`skipUnless(torch.backends.mps.is_available())`）。LSTM/GRU/TransformerModel 以 `GPU="mps"` 通过合成数据 stub 驱动公开 `fit`/`predict`，断言 device 解析为 mps、loss 逐 epoch 下降、预测有限；已合并 fork PR **#3**（`yorange2/qlib`）。实测三模型 MPS 端到端训练 OK（`.venv311`、`OMP_NUM_THREADS=1`、`MLFLOW_ALLOW_FILE_STORE=true`）。
 - 注：其余 23 处 `torch.cuda.empty_cache()` 仍是裸 `if self.use_gpu:` 守卫（MPS 下 use_gpu=True），macOS 构建上是 no-op 不影响 `GPU="mps"`，未随 PR #3 改动（保持 test-only）。
+- **P1.3 补完（TS 变体 float32 数据流）**：端到端跑 `csi300-lstm-momtopk`（`GPU="mps"`）暴露两个真实数据路径问题，均已在 qlib fork 修复并合并：
+  - PR **#4**：`*_ts` 模型默认样本权重 `np.ones(..., dtype=np.float32)`（原 float64，`weight.to(mps)` 直接抛错）。
+  - PR **#5**：`*_ts` 模型 fit/predict 循环中 feature/label 在 `.to(device)` 前统一 `.float()`（真实 handler 输出是 float64，MPS 拒绝）。冒烟测试改用 float64 合成数据（镜像真实输出），无修复时精确复现 TypeError。
+- **O3 ✅**：`scripts/update_cn_data.py`、`merge_cn_update.py` 移入 `orange_quant/data/`（`python -m orange_quant.data.update_cn_data`），scripts/ 保留转发 shim；已合并 orange-quant PR **#14**。
 
 ### 2026-08-08 执行记录
 
