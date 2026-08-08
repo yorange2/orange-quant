@@ -18,6 +18,7 @@ import ccxt
 import pandas as pd
 from dotenv import load_dotenv
 
+from orange_quant.trading.broker import Broker
 from orange_quant.trading.paper_broker import PaperBroker as _CorePaperBroker
 
 load_dotenv()
@@ -36,7 +37,7 @@ def _make_exchange(**extra) -> ccxt.hyperliquid:
     })
 
 
-class HyperliquidBroker:
+class HyperliquidBroker(Broker):
     """
     Hyperliquid live spot trading wrapper.
 
