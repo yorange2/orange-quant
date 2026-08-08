@@ -194,7 +194,12 @@ Alpha158 输出 float32 → `from_numpy().float()` **同 dtype 不复制**（共
 
 **环境要求**：py3.11（`.venv311`）+ `OMP_NUM_THREADS=1` + `MLFLOW_ALLOW_FILE_STORE=true`。py3.12 环境（`.venv`）未解阻（第 2/3 层修复已在，第 1 层 OMP 变量同样适用，可复测）。
 
-**当前状态**：P1.1-P1.3 完成（代码就绪、25 个模型文件统一 resolve_device、导入验证通过）；P1.4 blocked。**R2 重构（orange-quant 目录）不受影响**（LightGBM 管线正常）。
+**当前状态**：P1.1-P1.4 完成（代码就绪、25 个模型文件统一 resolve_device、导入验证通过、MPS 冒烟单测已合并 PR #3）；P3 待做。**R2 重构（orange-quant 目录）不受影响**（LightGBM 管线正常）。
+
+### 2026-08-09 执行记录
+
+- **P1.4 ✅**：MPS 冒烟单测固化进 `qlib/tests/model/test_pytorch_mps.py`（`skipUnless(torch.backends.mps.is_available())`）。LSTM/GRU/TransformerModel 以 `GPU="mps"` 通过合成数据 stub 驱动公开 `fit`/`predict`，断言 device 解析为 mps、loss 逐 epoch 下降、预测有限；已合并 fork PR **#3**（`yorange2/qlib`）。实测三模型 MPS 端到端训练 OK（`.venv311`、`OMP_NUM_THREADS=1`、`MLFLOW_ALLOW_FILE_STORE=true`）。
+- 注：其余 23 处 `torch.cuda.empty_cache()` 仍是裸 `if self.use_gpu:` 守卫（MPS 下 use_gpu=True），macOS 构建上是 no-op 不影响 `GPU="mps"`，未随 PR #3 改动（保持 test-only）。
 
 ### 2026-08-08 执行记录
 
