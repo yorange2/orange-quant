@@ -62,109 +62,6 @@ _DEFAULT_EXCHANGE_KWARGS = {
 }
 
 
-def _prefer_mps(model):
-    """Move a qlib PyTorch model to the Apple MPS (Metal) GPU when available.
-
-    NOTE (2026-08): qlib now natively resolves ``GPU="mps"`` via
-    ``qlib.contrib.model.pytorch_utils.resolve_device``, so prefer configuring
-    ``GPU: mps`` in the model kwargs. This shim is kept as an idempotent
-    fallback (it no-ops when the model is already on mps) and should be removed
-    once the P1.4 Blocker (qlib PyTorch fit segfault on this env) is resolved.
-
-    qlib's PyTorch models only auto-select CUDA-or-CPU (their ``GPU`` kwarg is
-    CUDA-only), so on Apple Silicon they train on CPU. Overriding ``model.device``
-    and moving the underlying ``nn.Module`` to ``mps`` gives a large speedup. Any
-    registered buffers (e.g. a transformer's positional encoding) move with ``.to``.
-
-    The inner module attribute is named differently across qlib models
-    (``model`` for TransformerModel, ``ALSTM_model``/``GRU_model``/``LSTM_model``
-    for the recurrent ones), so we can't hard-code ``model.model``: we scan the
-    model's attributes and move every ``nn.Module`` we find. Missing that is not
-    cosmetic — qlib moves the *input* batch to ``self.device`` during fit/predict,
-    so a device set to ``mps`` with weights left on CPU raises a hard
-    "weight is on cpu but expected on mps" error.
-
-    Safe no-op when MPS is unavailable or the model has no ``nn.Module``/``device``.
-    Set PYTORCH_ENABLE_MPS_FALLBACK=1 so any op MPS lacks falls back to CPU.
-    """
-    import os
-    if os.environ.get("ORANGE_DISABLE_MPS"):
-        # Escape hatch: MPS' CPU-fallback for ops it lacks (e.g. some LSTM/
-        # attention kernels) can thrash device transfers and end up slower than
-        # native CPU for these small recurrent models. Set ORANGE_DISABLE_MPS=1
-        # to keep training on CPU.
-        print("[experiment] ORANGE_DISABLE_MPS set; training on CPU")
-        return model
-    try:
-        import torch
-    except Exception:
-        return model
-    mps = getattr(torch.backends, "mps", None)
-    if not (mps and mps.is_available()):
-        return model
-    try:
-        dev = torch.device("mps")
-        moved = []
-        for attr in vars(model):
-            val = getattr(model, attr)
-            if isinstance(val, torch.nn.Module):
-                val.to(dev)
-                moved.append(attr)
-        if hasattr(model, "device"):
-            model.device = dev
-        if moved:
-            print(f"[experiment] Using Apple MPS (Metal GPU) for "
-                  f"{type(model).__name__} (moved: {', '.join(moved)})")
-        else:
-            print(f"[experiment] No nn.Module found on {type(model).__name__}; "
-                  f"set device=mps only")
-    except Exception as e:
-        print(f"[experiment] MPS enable failed ({e}); staying on the default device")
-    return model
-
-
-def _cast_handler_float32(handler) -> None:
-    """Downcast a qlib handler's prepared frames to float32 (for MPS).
-
-    qlib feeds the transformer the raw batch dtype (float64) and MPS rejects
-    float64, so cast the processed learn/infer/raw frames the samplers read from.
-    """
-    import numpy as np
-    for attr in ("_learn", "_infer", "_data"):
-        df = getattr(handler, attr, None)
-        if df is not None and hasattr(df, "astype"):
-            try:
-                setattr(handler, attr, df.astype(np.float32))
-            except Exception as e:
-                print(f"[experiment] float32 cast of handler.{attr} failed: {e}")
-
-
-def _float32_reweighter():
-    """A Reweighter that yields float32 sample weights (for MPS).
-
-    qlib's recurrent models (ALSTM/GRU/LSTM) otherwise build the training weight
-    as ``np.ones(len(dl))`` — float64 — and do ``weight.to(self.device)`` before
-    the loss. MPS has no float64 dtype at all, so that move raises outright. Their
-    ``fit`` accepts a ``reweighter`` whose weights are used verbatim, so returning
-    float32 ones keeps the loss identical (all-ones) while staying MPS-safe.
-    Returns ``None`` if qlib's Reweighter base can't be imported.
-    """
-    try:
-        from qlib.data.dataset.weight import Reweighter
-    except Exception:
-        return None
-    import numpy as np
-
-    class _Float32Ones(Reweighter):
-        def __init__(self):  # base __init__ intentionally raises; override it
-            pass
-
-        def reweight(self, data):
-            return np.ones(len(data), dtype=np.float32)
-
-    return _Float32Ones()
-
-
 def _end_active_experiment() -> None:
     """Close any active mlflow run / qlib experiment so qlib can be re-initialized.
 
@@ -542,23 +439,8 @@ def run_dl_from_yaml(config_path: str = "config/csi300-lstm-momtopk.yaml") -> di
     module = importlib.import_module(module_path)
     model_cls = getattr(module, model_name)
     model = model_cls(**model_kwargs)
-    _prefer_mps(model)
-    fit_kwargs = {}
-    if str(getattr(model, "device", "")) == "mps":
-        # MPS is float32-only, but qlib moves the raw float64 batch to the device
-        # before casting inside forward(), so downcast the prepared data first.
-        _cast_handler_float32(handler)
-        # ...and, for models whose fit takes a reweighter (ALSTM/GRU/LSTM), swap
-        # the default float64 all-ones weight for a float32 one (MPS has no
-        # float64, so their `weight.to(device)` would otherwise raise).
-        import inspect
-        if "reweighter" in inspect.signature(model.fit).parameters:
-            rw = _float32_reweighter()
-            if rw is not None:
-                fit_kwargs["reweighter"] = rw
-
     print(f"[experiment] Starting training of {model_name} model...")
-    model.fit(dataset, **fit_kwargs)
+    model.fit(dataset)
     print(f"[experiment] {model_name} training complete!")
 
     # qlib PyTorch models' predict() takes no `segment` (it uses the test segment

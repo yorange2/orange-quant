@@ -32,7 +32,7 @@ model:
         batch_size: 800
         metric: loss
         loss: mse
-        GPU: 0
+        GPU: mps
 
 dataset:
     step_len: 20

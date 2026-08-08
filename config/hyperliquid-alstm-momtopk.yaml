@@ -58,7 +58,7 @@ model:
         loss: mse
         seed: 42                # reproducible; NB single-seed return is noisy
         n_jobs: 0               # macOS: 0 workers avoids per-epoch spawn overhead
-        GPU: 0                  # falls back to CPU / MPS when CUDA is unavailable
+        GPU: mps                # Apple Silicon Metal (native qlib support; CPU-only boxes use GPU: cpu)
 
 dataset:
     step_len: 20               # temporal lookback window
