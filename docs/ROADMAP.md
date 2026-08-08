@@ -194,7 +194,7 @@ Alpha158 输出 float32 → `from_numpy().float()` **同 dtype 不复制**（共
 
 **环境要求**：py3.11（`.venv311`）+ `OMP_NUM_THREADS=1` + `MLFLOW_ALLOW_FILE_STORE=true`。py3.12 环境（`.venv`）未解阻（第 2/3 层修复已在，第 1 层 OMP 变量同样适用，可复测）。
 
-**当前状态**：P1.1-P1.4 完成（代码就绪、25 个模型文件统一 resolve_device、导入验证通过、MPS 冒烟单测已合并 PR #3）；P3 待做。**R2 重构（orange-quant 目录）不受影响**（LightGBM 管线正常）。
+**当前状态**：P1.1-P1.4 完成（代码就绪、25 个模型文件统一 resolve_device、导入验证通过、MPS 冒烟单测已合并 PR #3）；P3 完成（workaround 移除、`GPU: mps` 配置化、csi300-lstm-momtopk 端到端验证通过，orange-quant PR #15）。**R2 重构（orange-quant 目录）不受影响**（LightGBM 管线正常）。
 
 ### 2026-08-09 执行记录
 
@@ -204,6 +204,7 @@ Alpha158 输出 float32 → `from_numpy().float()` **同 dtype 不复制**（共
   - PR **#4**：`*_ts` 模型默认样本权重 `np.ones(..., dtype=np.float32)`（原 float64，`weight.to(mps)` 直接抛错）。
   - PR **#5**：`*_ts` 模型 fit/predict 循环中 feature/label 在 `.to(device)` 前统一 `.float()`（真实 handler 输出是 float64，MPS 拒绝）。冒烟测试改用 float64 合成数据（镜像真实输出），无修复时精确复现 TypeError。
 - **O3 ✅**：`scripts/update_cn_data.py`、`merge_cn_update.py` 移入 `orange_quant/data/`（`python -m orange_quant.data.update_cn_data`），scripts/ 保留转发 shim；已合并 orange-quant PR **#14**。
+- **P3 ✅**：`experiment.py` 删除 `_prefer_mps` / `_cast_handler_float32` / `_float32_reweighter` 及调用点（-124 行），`ORANGE_DISABLE_MPS` 逃生口移除（`GPU: cpu` 等价表达）；5 个 DL config 的 model kwargs 改为 `GPU: mps`（CPU 机器用 `GPU: cpu`）。**端到端验证**（py3.12 `.venv` + `OMP_NUM_THREADS=1`）：`csi300-lstm-momtopk` 无 workaround 全链路跑通——`device: mps` 训练 10 epochs（early stop，train loss 0.953→0.941）、IC 0.034 / Rank IC 0.043、871 天回测（无成本年化 11.2%）、模型导出 `models/csi300-lstm-momtopk.pkl`；`pa/pos=0` 为已知 PortAnaRecord 报告 bug。已合并 orange-quant PR **#15**。基准结论（§8.1）：小模型 MPS 慢于 CPU（5.5x），大 batch/大模型才值得 MPS，配置注释已文档化。
 
 ### 2026-08-08 执行记录
 
