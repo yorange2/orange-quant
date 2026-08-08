@@ -6,23 +6,25 @@ AI quantitative trading algorithm framework based on [Microsoft qlib](https://gi
 
 ```
 orange-quant/
-├── biance_lgb_momtopk/               # Core package
-│   ├── trading/                # Trading layer: Binance automated trading
-│   └── workflow/               # Experiment management: YAML config driven
+├── orange_quant/                # Core framework (exchange-agnostic)
+│   ├── experiment.py            # qlib experiment pipeline (train / backtest / DL)
+│   ├── runner.py / server.py    # Trading execution entry points
+│   ├── trading/                 # Broker ABC + simulated paper broker
+│   └── data/                    # Shared dataset pipeline, hourly phase study,
+│                                # unified build entry (--exchange) + venue hooks
+├── biance_lgb_momtopk/           # Binance adapter (data hooks + BinanceBroker + shims)
+├── hyperliquid_lgb_momtopk/      # Hyperliquid adapter (data hooks + HyperliquidBroker + shims)
 ├── config/                     # Experiment config files
 │   ├── csi300-lgb-momtopk.yaml
 │   └── binance-lgb-momtopk.yaml
-├── scripts/                    # Utility scripts
-│   └── csi300/
-│       └── build_data.py       # Download A-share data
-├── biance_lgb_momtopk/
-│   ├── data/
-│   │   └── build.py            # Build the Binance dataset
-│   ├── server.py               # Trading execution entry point
-│   └── train.py                # Train the LightGBM model
+├── scripts/                    # Utility scripts (A-share data update, sweeps)
+├── docs/ROADMAP.md             # Refactor & MPS-support roadmap
 ├── Dockerfile
 └── docker-compose.yml
 ```
+
+Venue-specific logic is confined to `orange_quant.data.sources` (fetch hooks)
+and the per-venue `Broker` implementations; everything else is shared.
 
 ## Quick start
 
