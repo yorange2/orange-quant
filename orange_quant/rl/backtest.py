@@ -32,8 +32,8 @@ from orange_quant.rl.network import MultiDiscreteActor, RotationCritic
 from orange_quant.rl.policy import MultiDiscretePPO
 
 
-def load_policy(cfg: dict, ds, device):
-    """Rebuild the policy graph and load the best checkpoint."""
+def load_policy(cfg: dict, ds, device, ckpt: str | None = None):
+    """Rebuild the policy graph and load a checkpoint (default: best)."""
     model_cfg, env_cfg, paths = cfg["model"], cfg["env"], cfg["paths"]
     obs_dim = ds.n_stocks * ds.n_feats + ds.n_stocks
     hidden = tuple(model_cfg["hidden"])
@@ -51,12 +51,12 @@ def load_policy(cfg: dict, ds, device):
             shape=(ds.n_stocks * ds.n_feats + ds.n_stocks,), dtype=np.float32),
     )
     model_dir = Path(paths["model_dir"])
-    ckpt = model_dir / "policy_best.pth"
-    if not ckpt.exists():
-        ckpt = model_dir / "policy_final.pth"
-    state = torch.load(ckpt, map_location=device, weights_only=True)
+    ckpt_path = Path(ckpt) if ckpt else model_dir / "policy_best.pth"
+    if not ckpt_path.exists():
+        ckpt_path = model_dir / "policy_final.pth"
+    state = torch.load(ckpt_path, map_location=device, weights_only=True)
     policy.load_state_dict(state)
-    print(f"[backtest] loaded checkpoint: {ckpt}")
+    print(f"[backtest] loaded checkpoint: {ckpt_path}")
     return policy.eval()
 
 
@@ -82,7 +82,7 @@ def main() -> None:
     cfg = load_config(args.config)
     ds = load_or_build(cfg)
     device = torch.device(cfg["model"]["device"])
-    policy = load_policy(cfg, ds, device)
+    policy = load_policy(cfg, ds, device, ckpt=args.ckpt)
 
     out_dir = Path(cfg["paths"]["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)

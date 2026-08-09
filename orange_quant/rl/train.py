@@ -51,7 +51,8 @@ def make_envs(ds, segment: str, horizon: int, env_cfg: dict, n: int,
 
 
 def train_policy(cfg: dict, ds, max_epoch: int | None = None,
-                model_dir: str | None = None, quiet: bool = False):
+                model_dir: str | None = None, quiet: bool = False,
+                body_pretrain: str | None = None):
     """Train a PPO policy on the given dataset (main() and walk-forward reuse).
 
     Returns (policy, best_reward, best_epoch). ``model_dir`` overrides the
@@ -81,6 +82,12 @@ def train_policy(cfg: dict, ds, max_epoch: int | None = None,
     hidden = tuple(model_cfg["hidden"])
     actor = MultiDiscreteActor(obs_dim, ds.n_stocks, len(env_cfg["tiers"]), hidden).to(device)
     critic = RotationCritic(obs_dim, hidden).to(device)
+    if body_pretrain:
+        state = torch.load(body_pretrain, map_location=device, weights_only=True)
+        actor.body.load_state_dict(state)
+        critic.body.load_state_dict(state)
+        if not quiet:
+            print(f"[train] actor/critic body initialized from {body_pretrain} (R3)")
     optim = torch.optim.Adam(
         list(actor.parameters()) + list(critic.parameters()), lr=ppo["lr"]
     )

@@ -40,16 +40,13 @@
 
 **结果**（test 2025-2026）：6 年训练窗口小幅改善——超额 −2.9% → **−1.5%**（IR −0.004，几乎打平等权）、总收益 −18.4% → −16.9%、Sharpe −0.18 → −0.15。更多市场状态（2018 熊/2020-21 牛/2022 熊）提升 test 泛化。
 
-### R3. 特征预训练（监督学习预热 encoder）
+### R3. 特征预训练（监督学习预热 encoder）✅ 已完成（2026-08-09，A/B 负面）
 
-**动机**：数据少时 RL 同时学"特征表示 + 策略"效率低；先用历史数据离线学特征表示，RL 只学策略头。
+- [x] `scripts/pretrain_encoder.py`：`(feats[t], zero tiers) → 次日收益` 回归（MSE），body 权重保存
+- [x] `train_policy(body_pretrain=...)` 加载 actor/critic 共享 body（输入维度对齐）
+- [x] 顺带修复 backtest `--ckpt` 参数（此前未生效）
 
-- [ ] 监督任务：用 `(feats[t], tiers[t]) → 次日收益` 训练一个小分类/回归头
-- [ ] 把学到的 encoder 作为 `MultiDiscreteActor`/`RotationCritic` 的共享 body 初始化
-- [ ] RL 训练时 body 冻结或低学习率微调
-- [ ] 验证：预训练 loss 收敛、RL 训练收敛速度（epochs-to-best）对比
-
-**预期**：收敛快数倍、valid 方差降低（常见于小样本 RL）。
+**A/B 结果**（binance 9 只池）：best valid +19%（0.293→0.348）但 test 变差（超额 −1.5% → −6.5%）——预训练特征表示钉在 train 段市场模式，拖累 test 泛化。负面，不采用。
 
 ### R4. 多市场联合训练
 
