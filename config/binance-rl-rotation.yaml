@@ -20,7 +20,7 @@ market:
 # -- Data config --
 data:
     raw_dir: "data/binance_raw"
-    start_time: "2019-01-01"              # 下载起点（覆盖冻结窗口）
+    start_time: "2017-01-01"              # 下载起点（R2：覆盖 2017 冻结窗口）
     end_time: "2026-08-07"
 
 # -- Universe: 历史冻结（train 起点前），只含当时已存在的币，消除新币前视 --
@@ -28,18 +28,18 @@ universe:
     provider: liquidity
     membership: null
     raw_dir: "data/binance_raw"
-    freeze_date: "2019-12-31"                 # train 起点前最后一天
-    liquidity_start: "2019-01-01"             # 冻结窗口（数据下载起点）
+    freeze_date: "2019-12-31"                 # 冻结保持 2019（币安 2017 币种过少，冻结 2017 只剩 2 只）
+    liquidity_start: "2019-01-01"
     top_n: 50
-    min_history_days: 200                     # 2019 窗口 ~242 交易日
+    min_history_days: 200
 
 # -- Features --
 features:
-    warmup_start: "2019-07-01"
+    warmup_start: "2017-01-01"
 
 # -- Training set --
 train:
-    start: "2020-01-01"
+    start: "2018-01-01"                       # R2：6 年训练窗口
     end: "2023-12-31"
 
 # -- Validation set --
