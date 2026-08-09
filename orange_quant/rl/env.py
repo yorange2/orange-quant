@@ -40,6 +40,7 @@ class RotationEnv(gym.Env):
         turnover_penalty: float = 0.0,
         baseline_reward: bool = False,
         decision_every: int = 1,
+        obs_noise: float = 0.0,
         seed: Optional[int] = None,
         start_idx: Optional[int] = None,
     ) -> None:
@@ -57,6 +58,7 @@ class RotationEnv(gym.Env):
         self.baseline_reward = baseline_reward
         self.decision_every = int(decision_every)  # frame-skip: act every N bars
         assert self.decision_every >= 1
+        self.obs_noise = float(obs_noise)  # train-time feature noise (R5)
         self._rng = np.random.default_rng(seed)
         self._start_idx = start_idx
         if start_idx is not None:
@@ -157,6 +159,10 @@ class RotationEnv(gym.Env):
             self._g.astype(np.float32) / 3.0,
         ]).astype(np.float32)
         assert obs.shape == (self.observation_space.shape[0],)
+        if self.obs_noise > 0:
+            # augment the feature part only — tier entries are exact state
+            nf = self.ds.n_feats * self.ds.n_stocks
+            obs[:nf] += self._rng.normal(0.0, self.obs_noise, size=nf).astype(np.float32)
         return obs
 
     @staticmethod

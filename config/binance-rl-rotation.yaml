@@ -60,6 +60,7 @@ env:
     cost_rate: 0.0005                     # 币安 taker 费率量级
     turnover_penalty: 0.02                # 换手正则（三轮实验最优，0.05 边际反转）
     baseline_reward: true
+    obs_noise: 0.0                      # R5 结论：0.05 噪声 A/B 负面（valid 不变、test 变差），不采用
 
 # -- Model config --
 model:

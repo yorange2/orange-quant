@@ -31,7 +31,7 @@ from orange_quant.rl.policy import MultiDiscretePPO
 
 def make_envs(ds, segment: str, horizon: int, env_cfg: dict, n: int,
               seed_base: Optional[int], turnover_penalty: float = 0.0,
-              baseline_reward: bool = False):
+              baseline_reward: bool = False, obs_noise: float = 0.0):
     """Build a vector env. The turnover penalty and the differential-reward
     baseline guide training only — valid/test evaluation uses pure returns so
     best-model selection and backtest reflect real (cost-net) performance."""
@@ -43,6 +43,7 @@ def make_envs(ds, segment: str, horizon: int, env_cfg: dict, n: int,
             turnover_penalty=turnover_penalty,
             baseline_reward=baseline_reward,
             decision_every=env_cfg.get("decision_every", 1),
+            obs_noise=obs_noise,
             seed=None if seed_base is None else seed_base + i,
         ))
         for i in range(n)
@@ -72,10 +73,12 @@ def main() -> None:
     train_envs = make_envs(ds, "train", env_cfg["horizon"], env_cfg, n_envs,
                            seed,
                            turnover_penalty=env_cfg.get("turnover_penalty", 0.0),
-                           baseline_reward=env_cfg.get("baseline_reward", False))
+                           baseline_reward=env_cfg.get("baseline_reward", False),
+                           obs_noise=env_cfg.get("obs_noise", 0.0))
     n_test = int(ppo["test_episodes"])
     test_envs = make_envs(ds, "valid", env_cfg["horizon"], env_cfg, n_test,
-                          seed, turnover_penalty=0.0, baseline_reward=False)
+                          seed, turnover_penalty=0.0, baseline_reward=False,
+                          obs_noise=0.0)
 
     obs_dim = ds.n_stocks * ds.n_feats + ds.n_stocks
     hidden = tuple(model_cfg["hidden"])
