@@ -64,7 +64,7 @@
 - [x] **obs 噪声增强**：实现（`env.obs_noise`，只加特征部分）+ A/B 验证
 - **A/B 结果（test 2025-2026）**：σ=0.05 时 valid 不变（0.294 vs 0.293）但 test 变差（超额 −1.5% → −4.4%）——噪声钝化特征信号，负面，不采用
 
-### R6. walk-forward 滚动重训 ✅ 已完成（2026-08-09，显著正向）
+### R6. walk-forward 滚动重训 ✅ 已完成（2026-08-09，显著正向）+ 实盘工程化 ✅
 
 - [x] `scripts/walkforward.py`：6 个月 OOS 窗口 × 前 3 年重训（25 epoch），聚合 OOS 指标
 - [x] `train_policy()` 从 train.py 抽出复用
@@ -73,6 +73,7 @@
 - 聚合 OOS：总收益 **+8.6%**、年化 **+3.7%**（转正）、Sharpe +0.05
 - vs 单次训练（同段 −16.9%、−7.8%/年）——改善 ~25pct，**分布漂移确为主矛盾**
 - caveat：z-score 用原 train 段拟合（特征层轻微泄漏），严格版需每窗口重建特征
+- **实盘工程化**：`scripts/retrain_live.py`（cron 每季度）+ 原子模型替换（checkpoint 写 .tmp → os.replace）+ 重训历史 `retrain_history.json`；live 每次运行加载最新模型，无需重启 server
 
 ## 实施顺序建议
 

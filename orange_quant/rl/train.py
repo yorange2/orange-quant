@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -133,7 +134,9 @@ def train_policy(cfg: dict, ds, max_epoch: int | None = None,
                   f"(± {float(result['rew_std']):.6f}, {int(result['n/ep'])} eps)")
         if rew > best_reward:
             best_reward, best_epoch = rew, epoch
-            torch.save(policy.state_dict(), best_ckpt)
+            tmp = best_ckpt.with_suffix(".pth.tmp")
+            torch.save(policy.state_dict(), tmp)
+            os.replace(tmp, best_ckpt)  # atomic swap for live readers
             best_metric_path.write_text(json.dumps(
                 {"epoch": epoch, "valid_mean_reward": rew}, indent=2))
             if not quiet:
@@ -159,8 +162,10 @@ def train_policy(cfg: dict, ds, max_epoch: int | None = None,
         verbose=False,
     )
 
-    # final checkpoint (best is preferred; save both)
-    torch.save(policy.state_dict(), model_dir / "policy_final.pth")
+    # final checkpoint (best is preferred; save both, atomically)
+    tmp = model_dir / "policy_final.pth.tmp"
+    torch.save(policy.state_dict(), tmp)
+    os.replace(tmp, model_dir / "policy_final.pth")
     if not quiet:
         print(f"[train] done: {int(result['train_step'])} steps collected, "
               f"best valid reward {best_reward:.6f} (epoch {best_epoch})")

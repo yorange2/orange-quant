@@ -84,6 +84,17 @@ ex-dividend returns); validation-segment mean reward improved from +0.87%/day
 (legacy data) to +1.57%/day. Strategy alpha vs equal-weight is still an open
 research question (see ROADMAP).
 
+## Live retraining (walk-forward schedule)
+
+```bash
+# quarterly, from cron (e.g. 1st of Jan/Apr/Jul/Oct 03:00):
+# 0 3 1 1,4,7,10 * cd /path/to/orange-quant && .venv/bin/python -m scripts.retrain_live --config binance-rl-rotation
+```
+Retrains on the trailing 3 years (valid = last 6 months), refreshes the raw
+bars/npz, and atomically swaps `models/<cfg>/policy_best.pth` — the live
+server loads the checkpoint on every daily run, so the new model takes effect
+without a restart. History in `models/<cfg>/retrain_history.json`.
+
 ## Notes
 
 - Data is backward-adjusted (hfq); never use qfq for investment series (re-anchored
