@@ -153,7 +153,13 @@ class RotationEnv(gym.Env):
             free = ~over
             if not free.any() or slack <= 0.0:
                 break
-            w[free] += slack * (v[free] / v[free].sum())
+            v_free = v[free].sum()
+            if v_free > 0:
+                w[free] += slack * (v[free] / v_free)
+            else:
+                # no weight mass among the free names (all-zero tiers): spread
+                # the slack evenly instead of dividing by zero
+                w[free] += slack / free.sum()
         return w
 
     def weights_from_tiers(self, tiers_act: np.ndarray) -> np.ndarray:
