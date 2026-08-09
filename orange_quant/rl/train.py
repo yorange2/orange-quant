@@ -50,19 +50,16 @@ def make_envs(ds, segment: str, horizon: int, env_cfg: dict, n: int,
     ])
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Train csi300 RL rotation PPO")
-    parser.add_argument("config", help="config name without .yaml")
-    parser.add_argument("--max-epoch", type=int, default=None,
-                        help="override ppo.max_epoch (quick smoke runs)")
-    parser.add_argument("--no-mlflow", action="store_true")
-    args = parser.parse_args()
+def train_policy(cfg: dict, ds, max_epoch: int | None = None,
+                model_dir: str | None = None, quiet: bool = False):
+    """Train a PPO policy on the given dataset (main() and walk-forward reuse).
 
-    cfg = load_config(args.config)
-    ds = load_or_build(cfg)
+    Returns (policy, best_reward, best_epoch). ``model_dir`` overrides the
+    config's path; ``quiet`` suppresses the per-epoch valid prints.
+    """
     ppo, model_cfg, env_cfg, paths = cfg["ppo"], cfg["model"], cfg["env"], cfg["paths"]
-    if args.max_epoch:
-        ppo = {**ppo, "max_epoch": args.max_epoch}
+    if max_epoch:
+        ppo = {**ppo, "max_epoch": max_epoch}
     seed = int(ppo["seed"])
 
     torch.manual_seed(seed)
@@ -110,7 +107,7 @@ def main() -> None:
     )
     test_collector = Collector(policy, test_envs, None)
 
-    model_dir = Path(paths["model_dir"])
+    model_dir = Path(model_dir if model_dir else paths["model_dir"])
     model_dir.mkdir(parents=True, exist_ok=True)
     best_ckpt = model_dir / "policy_best.pth"
     best_metric_path = model_dir / "best_metric.json"
@@ -124,14 +121,16 @@ def main() -> None:
             result = test_collector.collect(n_episode=n_test)
         policy.train()
         rew = float(np.asarray(result["rew"]).mean())
-        print(f"[train] epoch {epoch}: valid mean reward {rew:.6f} "
-              f"(± {float(result['rew_std']):.6f}, {int(result['n/ep'])} eps)")
+        if not quiet:
+            print(f"[train] epoch {epoch}: valid mean reward {rew:.6f} "
+                  f"(± {float(result['rew_std']):.6f}, {int(result['n/ep'])} eps)")
         if rew > best_reward:
             best_reward, best_epoch = rew, epoch
             torch.save(policy.state_dict(), best_ckpt)
             best_metric_path.write_text(json.dumps(
                 {"epoch": epoch, "valid_mean_reward": rew}, indent=2))
-            print(f"[train]  → best checkpoint saved: {best_ckpt}")
+            if not quiet:
+                print(f"[train]  → best checkpoint saved: {best_ckpt}")
         return rew
 
     def train_fn(epoch: int, env_step: int) -> None:
@@ -155,8 +154,25 @@ def main() -> None:
 
     # final checkpoint (best is preferred; save both)
     torch.save(policy.state_dict(), model_dir / "policy_final.pth")
-    print(f"[train] done: {int(result['train_step'])} steps collected, "
-          f"best valid reward {best_reward:.6f} (epoch {best_epoch})")
+    if not quiet:
+        print(f"[train] done: {int(result['train_step'])} steps collected, "
+              f"best valid reward {best_reward:.6f} (epoch {best_epoch})")
+    return policy, best_reward, best_epoch
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Train csi300 RL rotation PPO")
+    parser.add_argument("config", help="config name without .yaml")
+    parser.add_argument("--max-epoch", type=int, default=None,
+                        help="override ppo.max_epoch (quick smoke runs)")
+    parser.add_argument("--no-mlflow", action="store_true")
+    args = parser.parse_args()
+
+    cfg = load_config(args.config)
+    ds = load_or_build(cfg)
+    policy, best_reward, best_epoch = train_policy(cfg, ds, max_epoch=args.max_epoch)
+    ppo, model_cfg = cfg["ppo"], cfg["model"]
+    hidden = tuple(model_cfg["hidden"])
 
     if not args.no_mlflow:
         try:
@@ -164,13 +180,13 @@ def main() -> None:
             # mlflow 3.x blocks the filesystem backend by default
             os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
             import mlflow
-            with mlflow.start_run(run_name="csi300-rl-rotation"):
+            with mlflow.start_run(run_name=cfg["market"]["venue"] + "-rl-rotation"):
                 mlflow.log_params({**ppo, "device": model_cfg["device"],
                                    "hidden": list(hidden),
                                    "universe_top_n": ds.n_stocks})
                 mlflow.log_metric("valid_best_reward", best_reward)
                 mlflow.log_metric("valid_best_epoch", best_epoch)
-                mlflow.log_artifact(str(best_ckpt))
+                mlflow.log_artifact(str(Path(cfg["paths"]["model_dir"]) / "policy_best.pth"))
                 print(f"[train] mlflow run logged")
         except Exception as e:  # noqa: BLE001 - tracking is best-effort
             print(f"[train] mlflow logging skipped: {e}")
