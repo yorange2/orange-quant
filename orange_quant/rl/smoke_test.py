@@ -1,7 +1,7 @@
 """Smoke test: tianshou 0.4.10 × gym 0.26 × torch 2.5 × numpy 2.x compatibility
 plus the MultiDiscrete PPO data flow, on a toy environment.
 
-Run: cd orange-quant && ../.venv/bin/python -m csi300_rl_rotation.smoke_test
+Run: cd orange-quant && ../.venv/bin/python -m orange_quant.rl.smoke_test
 """
 
 from __future__ import annotations
@@ -12,8 +12,8 @@ from gym import spaces
 from tianshou.data import Collector, VectorReplayBuffer
 from tianshou.env import DummyVectorEnv
 
-from csi300_rl_rotation.network import MultiCategorical, MultiDiscreteActor, RotationCritic
-from csi300_rl_rotation.policy import MultiDiscretePPO
+from orange_quant.rl.network import MultiCategorical, MultiDiscreteActor, RotationCritic
+from orange_quant.rl.policy import MultiDiscretePPO
 
 
 class ToyEnv:

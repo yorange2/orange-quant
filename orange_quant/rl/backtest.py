@@ -1,6 +1,6 @@
 """Backtest: deterministic rollout of a trained policy over the test segment.
 
-Run: cd orange-quant && ../.venv/bin/python -m csi300_rl_rotation.backtest <config>
+Run: cd orange-quant && ../.venv/bin/python -m orange_quant.rl.backtest <config>
 
 Loads models/<cfg>/policy_best.pth (falls back to policy_final.pth), rolls out
 the whole test segment as a single episode (deterministic argmax actions),
@@ -25,11 +25,11 @@ import pandas as pd
 import torch
 from tianshou.data import Batch
 
-from csi300_rl_rotation.data import load_config, load_or_build
-from csi300_rl_rotation.env import RotationEnv
-from csi300_rl_rotation.metrics import return_metrics
-from csi300_rl_rotation.network import MultiDiscreteActor, RotationCritic
-from csi300_rl_rotation.policy import MultiDiscretePPO
+from orange_quant.rl.dataset import load_config, load_or_build
+from orange_quant.rl.env import RotationEnv
+from orange_quant.rl.metrics import return_metrics
+from orange_quant.rl.network import MultiDiscreteActor, RotationCritic
+from orange_quant.rl.policy import MultiDiscretePPO
 
 
 def load_policy(cfg: dict, ds, device):
@@ -59,18 +59,14 @@ def load_policy(cfg: dict, ds, device):
     return policy.eval()
 
 
-def load_benchmark(ds, provider_uri: str) -> np.ndarray:
-    """SH000300 index NAV aligned to the dataset calendar."""
-    import qlib
-    from qlib.data import D
-
-    qlib.init(provider_uri=provider_uri, region="cn")
+def load_benchmark(ds, cfg) -> np.ndarray:
+    """Benchmark index NAV from the local raw CSV, aligned to the test calendar."""
+    sym = cfg["market"]["benchmark_symbol"]
+    raw = Path(cfg["data"]["raw_dir"]) / f"{sym}.csv"
+    idx = pd.read_csv(raw, parse_dates=["date"]).set_index("date").sort_index()
     test_s, test_e = ds.split_idx["test"]
-    dates = ds.dates[test_s : test_e + 1]
-    idx = D.features(["SH000300"], ["$close"], start_time=str(dates[0]),
-                     end_time=str(dates[-1]), freq="day")
-    c = idx["$close"].unstack(level="instrument").iloc[:, 0].reindex(
-        pd.DatetimeIndex(dates))
+    dates = pd.DatetimeIndex(ds.dates[test_s : test_e + 1])
+    c = idx["close"].reindex(dates)
     rets = c.pct_change(fill_method=None).fillna(0.0).to_numpy()
     nav = np.cumprod(1.0 + rets)
     return nav
@@ -131,7 +127,7 @@ def main() -> None:
     s = test_s
     ew_ret = (ds.r_gap[s : s + horizon] + ds.r_intra[s : s + horizon]).mean(axis=1)
     ew_nav = np.cumprod(1.0 + ew_ret)
-    bench_nav = load_benchmark(ds, cfg["qlib_init"]["provider_uri"])
+    bench_nav = load_benchmark(ds, cfg)
 
     t = min(len(rl), len(ew_nav), len(bench_nav))
     navs = {

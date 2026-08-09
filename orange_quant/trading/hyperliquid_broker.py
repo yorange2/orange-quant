@@ -19,7 +19,6 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from orange_quant.trading.broker import Broker
-from orange_quant.trading.paper_broker import PaperBroker as _CorePaperBroker
 
 load_dotenv()
 
@@ -178,7 +177,3 @@ class HyperliquidBroker(Broker):
             self.exchange.cancel_order(o["id"], o["symbol"])
         print(f"[broker] Cancelled {len(orders)} open orders")
 
-
-def PaperBroker(coins: List[str], initial_usdc: float = 100000.0):
-    """Back-compatible factory: the shared paper broker quoted in USDC on Hyperliquid."""
-    return _CorePaperBroker(coins, _QUOTE, _make_exchange, initial_cash=initial_usdc)

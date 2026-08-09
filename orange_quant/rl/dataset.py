@@ -1,25 +1,23 @@
-"""Data layer: freeze the universe, build features, and precompute numpy arrays.
+"""Dataset layer: freeze the universe, build features, precompute numpy arrays.
 
-Everything qlib reads happens in this module, once, via ``python -m
-csi300_rl_rotation.data <config>``; the result is cached as a .npz that the
-training loop and the environment consume with zero qlib involvement.
+Reads raw per-symbol CSV bars (A-shares from the Tencent feed via
+``orange_quant.data.tencent``; crypto from ``orange_quant.data.pipeline``) and
+caches the result as .npz for the training loop and environment — no qlib, no
+live APIs at training time.
 
 Look-ahead guards (all enforced here):
   * universe is frozen at ``freeze_date`` (last trading day before training),
     using only liquidity from before that date;
   * feature z-scores are fit on the train segment only;
   * the feature warmup window feeds features only — it never enters rewards;
-  * r_gap/r_intra are per-stock aligned on their own last traded close, then
+  * r_gap/r_intra are per-symbol aligned on their own last traded close, then
     re-aligned to the shared calendar (suspended days → 0 return).
-
-NOTE: qlib's D.features spawns multiprocessing workers, which crashes when
-driven from stdin or ``python -c`` — always run this module as ``python -m``.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -27,14 +25,10 @@ import numpy as np
 import pandas as pd
 import yaml
 
-# NOTE: $amount (turnover) only exists from 2020-09-25 on (Tencent feed); the
-# Yahoo-era data has OHLCV only. All features must be computable from OHLCV,
-# and liquidity is proxied by $volume.
 _FEATURE_COLS = [
     "mom5", "mom20", "mom60", "ret1", "vol20", "std5",
     "vol_ratio", "vol_trend", "kdj_pos", "hilo20",
 ]
-_FIELDS = ["$open", "$close", "$high", "$low", "$volume"]
 
 
 @dataclass
@@ -47,6 +41,8 @@ class RotationDataset:
     r_gap: np.ndarray            # (T, N) float32, open[t]/close[prev] − 1
     r_intra: np.ndarray          # (T, N) float32, close[t]/open[t] − 1
     split_idx: Dict[str, Tuple[int, int]]  # train/valid/test → (start, end) index
+    zmean: np.ndarray = None     # (N, F) z-score mean, fit on train (live reuse)
+    zstd: np.ndarray = None      # (N, F) z-score std, fit on train (live reuse)
 
     @property
     def n_stocks(self) -> int:
@@ -62,45 +58,44 @@ def load_config(config_name: str) -> dict:
         return yaml.safe_load(f)
 
 
-def freeze_universe(
-    provider_uri: str,
-    freeze_date: str,
-    top_n: int,
-    liquidity_start: str,
-) -> List[str]:
-    """Top-N most liquid csi300 members at ``freeze_date`` (descending).
+def bar_reader(config: dict) -> Callable[[str], Optional[pd.DataFrame]]:
+    """Return a per-symbol CSV reader normalized to [date,open,high,low,close,volume].
 
-    Uses the dev-qlib instrument API: ``D.instruments`` returns a config dict,
-    ``D.list_instruments`` returns ``{stock: [(start, end), ...]}`` validity
-    periods; a member counts as "in the pool at freeze_date" if its validity
-    window contains it.
+    cn CSVs (Tencent) have columns date,symbol,open,high,low,close,volume,amount;
+    crypto CSVs (pipeline.candles_to_csv) have date,open,close,high,low,volume.
+    The reader returns a DataFrame indexed by date (datetime64), or None when the
+    symbol has no file / is unparseable.
     """
-    import qlib
-    from qlib.data import D
+    raw_dir = Path(config["data"]["raw_dir"])
 
-    qlib.init(provider_uri=provider_uri, region="cn")
-    # NOTE: list_instruments truncates to the given time range — without an
-    # explicit start it only returns the most recent snapshot (2020-06-15+).
-    valid = D.list_instruments(D.instruments("csi300"),
-                               start_time=liquidity_start, end_time=freeze_date)
-    cut = pd.Timestamp(freeze_date)
-    listed = sorted(
-        s for s, periods in valid.items()
-        if any(s0 <= cut <= e0 for s0, e0 in periods)
-    )
-    # liquidity proxy: mean daily $volume over the window (no $amount pre-2020)
-    vol = D.features(listed, ["$volume"], start_time=liquidity_start,
-                     end_time=freeze_date, freq="day")
-    daily = vol["$volume"].unstack(level="instrument").mean(axis=0)
-    daily = daily[daily > 0].fillna(0)  # drop never-traded names
-    return daily.sort_values(ascending=False).head(top_n).index.tolist()
+    def _read(symbol: str) -> Optional[pd.DataFrame]:
+        p = raw_dir / f"{symbol}.csv"
+        if not p.exists():
+            return None
+        try:
+            df = pd.read_csv(p, parse_dates=["date"]).set_index("date").sort_index()
+        except Exception:  # noqa: BLE001 - unparseable file treated as missing
+            return None
+        if df.empty:
+            return None
+        cols = {c: c for c in df.columns}
+        # unify column names: crypto uses open,close,high,low (pipeline order)
+        if "open" not in df and "close" in df and "high" in df and "low" in df:
+            pass
+        if "close" in df and "high" in df and "low" in df and "volume" in df:
+            keep = ["open", "high", "low", "close", "volume"]
+            if "open" not in df:  # crypto CSV has open but let's be safe
+                pass
+            return df[[c for c in keep if c in df.columns]]
+        return None
+
+    return _read
 
 
 def _per_stock_features(ohlcv: pd.DataFrame) -> pd.DataFrame:
-    """10 hand-built factors from OHLCV only (no $amount pre-2020, no $vwap).
-    Returns a copy with a column per feature."""
-    c, o, h, l = ohlcv["$close"], ohlcv["$open"], ohlcv["$high"], ohlcv["$low"]
-    v = ohlcv["$volume"]
+    """10 hand-built factors from OHLCV only. Returns a copy, one col per feature."""
+    c, o, h, l = ohlcv["close"], ohlcv["open"], ohlcv["high"], ohlcv["low"]
+    v = ohlcv["volume"]
     ret = c.pct_change(fill_method=None)
     df = pd.DataFrame(index=ohlcv.index)
     df["mom5"] = c / c.shift(5) - 1
@@ -119,9 +114,8 @@ def _per_stock_features(ohlcv: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_dataset(config: dict) -> RotationDataset:
-    """Load qlib data, compute features/returns, z-score, split, and cache."""
+    """Load raw CSV bars, compute features/returns, z-score, split, and cache."""
 
-    provider = config["qlib_init"]["provider_uri"]
     data_end = config["data"]["end_time"]
     train_s, train_e = config["train"]["start"], config["train"]["end"]
     valid_s, valid_e = config["valid"]["start"], config["valid"]["end"]
@@ -129,32 +123,38 @@ def build_dataset(config: dict) -> RotationDataset:
     uni = config["universe"]
     warmup_start = config["features"]["warmup_start"]
 
-    codes = freeze_universe(provider, uni["freeze_date"], uni["top_n"],
-                            uni["liquidity_start"])
+    from orange_quant.data.universe import freeze_universe as freeze
+
+    codes = freeze(uni["raw_dir"], uni["top_n"], uni["freeze_date"],
+                   uni["liquidity_start"],
+                   membership=uni.get("membership"),
+                   min_history_days=uni.get("min_history_days", 250))
     print(f"[data] frozen universe: {len(codes)} names, "
           f"freeze_date={uni['freeze_date']}")
 
-    import qlib
-    from qlib.data import D
-
-    qlib.init(provider_uri=provider, region="cn")
-    cal = pd.DatetimeIndex(D.calendar(start_time=warmup_start, end_time=data_end,
-                                      freq="day"))
-    raw = D.features(codes, _FIELDS, start_time=warmup_start,
-                     end_time=data_end, freq="day")
+    read = bar_reader(config)
+    w0, w1 = pd.Timestamp(warmup_start), pd.Timestamp(data_end)
+    bars = {code: read(code) for code in codes}
+    bars = {c: b for c, b in bars.items() if b is not None}
+    cal = pd.DatetimeIndex(sorted({
+        d for b in bars.values() for d in b.index if w0 <= d <= w1
+    }))
+    print(f"[data] calendar {cal[0].date()} ~ {cal[-1].date()} ({len(cal)} days)")
 
     feats = np.full((len(cal), len(codes), len(_FEATURE_COLS)), np.nan, np.float32)
     r_gap = np.zeros((len(cal), len(codes)), np.float32)
     r_intra = np.zeros((len(cal), len(codes)), np.float32)
 
     for j, code in enumerate(codes):
-        one = raw.xs(code, level="instrument").reindex(cal)
+        if code not in bars:
+            continue
+        one = bars[code].reindex(cal)
         f = _per_stock_features(one)
         feats[:, j, :] = f[_FEATURE_COLS].to_numpy()
 
         # returns first on the stock's own (unaligned) series so a resumption
         # day's gap is measured from its last traded close, then re-aligned
-        c, o = one["$close"], one["$open"]
+        c, o = one["close"], one["open"]
         prev_close = c.shift(1)
         gap = (o / prev_close - 1.0).reindex(cal)
         intra = (c / o - 1.0).reindex(cal)
@@ -167,14 +167,17 @@ def build_dataset(config: dict) -> RotationDataset:
     def last_at_or_before(day: str) -> int:
         return int(cal.searchsorted(pd.Timestamp(day), side="right")) - 1
 
-    # z-score fit on the train segment only (per stock, per feature)
+    # z-score fit on the train segment only (per stock, per feature); the
+    # parameters are cached for live inference (orange_quant.live). A symbol
+    # with no history in the train segment (late listing) gets NaN stats here —
+    # neutralize so the cached params never poison live normalization.
     t0 = first_at_or_after(train_s)
     t1 = last_at_or_before(train_e)
     tr = feats[t0 : t1 + 1]
-    mean = np.nanmean(tr, axis=0, keepdims=True)
-    std = np.nanstd(tr, axis=0, keepdims=True)
-    std[std < 1e-8] = 1.0
-    feats = np.clip((feats - mean) / std, -3.0, 3.0)
+    zmean = np.nan_to_num(np.nanmean(tr, axis=0), nan=0.0)   # (N, F)
+    zstd = np.nan_to_num(np.nanstd(tr, axis=0), nan=1.0)     # (N, F)
+    zstd[zstd < 1e-8] = 1.0
+    feats = np.clip((feats - zmean[None]) / zstd[None], -3.0, 3.0)
     feats = np.nan_to_num(feats, nan=0.0).astype(np.float32)
 
     split_idx = {
@@ -195,6 +198,8 @@ def build_dataset(config: dict) -> RotationDataset:
         r_gap=r_gap,
         r_intra=r_intra,
         split_idx=split_idx,
+        zmean=zmean.astype(np.float32),
+        zstd=zstd.astype(np.float32),
     )
 
 
@@ -215,10 +220,12 @@ def load_or_build(config: dict, force: bool = False) -> RotationDataset:
             r_gap=z["r_gap"],
             r_intra=z["r_intra"],
             split_idx={k: tuple(v) for k, v in meta["split_idx"].items()},
+            zmean=z["zmean"],
+            zstd=z["zstd"],
         )
     ds = build_dataset(config)
     np.savez(npz_path, dates=ds.dates, feats=ds.feats, r_gap=ds.r_gap,
-             r_intra=ds.r_intra)
+             r_intra=ds.r_intra, zmean=ds.zmean, zstd=ds.zstd)
     meta_path.write_text(json.dumps({
         "codes": ds.codes,
         "split_idx": {k: list(v) for k, v in ds.split_idx.items()},

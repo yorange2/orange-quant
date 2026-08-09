@@ -1,54 +1,42 @@
 ---
 name: oq-live-trade
-description: Local live/simulated automated trading, supporting analysis and order placement
+description: Execute the trained RL rotation policy through the crypto broker — paper or live — idempotent per day
+argument-hint: "[--config binance-rl-rotation|hyperliquid-rl-rotation]"
 ---
 
-# Live Trading
+# Live Trade
 
-Local live/simulated automated trading. Supports both analysis-only and order-placement modes.
+Run the daily RL rotation for a crypto market. The runner rebuilds today's
+observation (same features + z-score params as training), maps the policy's
+tiers to target weights (× risk_degree), diffs against holdings, and places
+market orders. Idempotent: a state file prevents double execution on the same
+date unless `--force`.
 
-## Trigger conditions
-- "live trading" / "place order" / "rebalance" / "trade"
-- "check positions" / "check positions"
-
-## Prerequisites
-
-1. `.env` file configured with `BINANCE_API_KEY` and `BIANCE_SECRET_KEY`
-
-## Running
+## Paper (safe, recommended first)
 
 ```bash
-source .venv/bin/activate
-
-# DRY RUN mode (analyze only, no orders placed; recommended to run first)
-python -m biance_lgb_momtopk.server --once --dry-run
-
-# Place real orders (mainnet)
-python -m biance_lgb_momtopk.server --once
-
-# Use LightGBM model predictions
-python -m biance_lgb_momtopk.server --once --model models/binance-lgb-momtopk.pkl
+python -m orange_quant.server --config binance-rl-rotation --once --dry-run
+# prints tiers/weights/orders; writes data/live_state/binance.json
 ```
 
-## Current holdings
+## Live
 
 ```bash
-source .venv/bin/activate
-python -c "
-from dotenv import load_dotenv; load_dotenv(override=True)
-from biance_lgb_momtopk.trading.broker import BinanceBroker
-broker = BinanceBroker(testnet=False, paper=False)
-balances = broker.get_balances()
-for a, amt in sorted(balances.items()):
-    if amt > 0.0001:
-        p = broker.get_current_prices([f'{a}/USDT']).get(f'{a}/USDT', 0) if a != 'USDT' else 1
-        print(f'  {a}: {amt:.6f} (≈\${amt*p:,.2f})')
-"
+# .env must contain the venue keys (BINANCE_API_KEY/BIANCE_SECRET_KEY or
+# HYPERLIQUID_ADDRESS/HYPERLIQUID_PRIVATE_KEY)
+python -m orange_quant.server --config binance-rl-rotation --once
 ```
 
-## Safety notes
+## Scheduled (Docker)
 
-- Market orders, fill immediately
-- Minimum trade size $20 USDT (no trade below this)
-- Maximum position size per coin: 25%
-- Coins with many decimal places (e.g. TRX) may leave dust residue (automatically skipped)
+```bash
+docker compose --profile binance-live up -d       # daily at 00:15 UTC
+docker compose --profile hl-live up -d
+docker compose --profile binance-once up          # one-shot dry run
+```
+
+## Checks
+
+- Heartbeat: `cat data/live_state/heartbeat.json` freshness (healthcheck).
+- State: `cat data/live_state/binance.json` → date, tiers, weights, orders.
+- A failed order (e.g. Binance reduce-only) is blacklisted and skipped next run.

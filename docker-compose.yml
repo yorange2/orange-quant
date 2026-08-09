@@ -1,42 +1,25 @@
 services:
-  orange-quant:
+  # ── Binance live ────────────────────────────────────────────
+  orange-quant-binance:
     build: .
     image: orange-quant:latest
-    container_name: orange-quant
+    container_name: orange-quant-binance
     restart: unless-stopped
-
     env_file:
       - .env
-
-    # Mount models and data (must be downloaded on the server beforehand)
     volumes:
       - ./models:/app/models
       - ./data:/app/data
-
-    # Rebalance daily at 00:15 UTC (08:15 Beijing time) by default
-    # Uses LightGBM model predictions; remove --model if not needed (falls back to the momentum strategy)
-    # --n-drop/--hold-thresh: Binance ignores the config's rotation and defaults to
-    # full daily rotation; these flags switch it to partial rotation (higher IR, ~half
-    # the turnover/cost in backtest across both OOS windows).
-    # n_drop=1 is the slowest partial rotation and the phase-robust choice: less
-    # turnover means less exposure to day-boundary-sensitive entry/exit timing.
-    # topk/risk_degree are NOT here — server.py reads those from the model's yaml.
-    command: ["--retrain", "--hour", "0", "--minute", "11", "--model", "models/binance-lgb-momtopk.pkl", "--n-drop", "1", "--hold-thresh", "2"]
-
+    command: ["--config", "binance-rl-rotation", "--hour", "0", "--minute", "15"]
     profiles:
-      - live
-
+      - binance-live
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
 
-  # ── Hyperliquid spot ────────────────────────────────────────
-
-  # LIVE trading on Hyperliquid, rebalance daily at 00:15 UTC
-  # Strategy params (topk / n_drop / hold_thresh / risk_degree) come from
-  # config/hyperliquid-lgb-momtopk.yaml so live matches the backtest
+  # ── Hyperliquid live ────────────────────────────────────────
   orange-quant-hl:
     build: .
     image: orange-quant:latest
@@ -47,8 +30,7 @@ services:
     volumes:
       - ./models:/app/models
       - ./data:/app/data
-    entrypoint: ["python", "-m", "hyperliquid_lgb_momtopk.server"]
-    command: ["--retrain", "--hour", "0", "--minute", "15", "--model", "models/hyperliquid-lgb-momtopk.pkl"]
+    command: ["--config", "hyperliquid-rl-rotation", "--hour", "0", "--minute", "15"]
     profiles:
       - hl-live
     logging:
@@ -57,7 +39,26 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Run once manually (for testing/deployment verification)
+  # ── One-shot dry runs (deployment verification) ─────────────
+  orange-quant-binance-once:
+    build: .
+    image: orange-quant:latest
+    container_name: orange-quant-binance-once
+    restart: "no"
+    env_file:
+      - .env
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+    command: ["--config", "binance-rl-rotation", "--once", "--dry-run"]
+    profiles:
+      - binance-once
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   orange-quant-hl-once:
     build: .
     image: orange-quant:latest
@@ -68,8 +69,7 @@ services:
     volumes:
       - ./models:/app/models
       - ./data:/app/data
-    entrypoint: ["python", "-m", "hyperliquid_lgb_momtopk.server"]
-    command: ["--once", "--retrain", "--dry-run", "--model", "models/hyperliquid-lgb-momtopk.pkl", "--topk", "5"]
+    command: ["--config", "hyperliquid-rl-rotation", "--once", "--dry-run"]
     profiles:
       - hl-once
     logging:
@@ -77,25 +77,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-  # ── Binance one-shot ────────────────────────────────────────
-
-  # Run once manually (for testing/deployment verification)
-  orange-quant-once:
-    build: .
-    image: orange-quant:latest
-    container_name: orange-quant-once
-    restart: "no"
-    env_file:
-      - .env
-    volumes:
-      - ./models:/app/models
-      - ./data:/app/data
-    command: ["--once", "--retrain", "--dry-run", "--model", "models/binance-lgb-momtopk.pkl"]
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    profiles:
-      - once

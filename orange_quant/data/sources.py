@@ -13,7 +13,7 @@ from pathlib import Path
 
 import requests
 
-from orange_quant.data import hourly, pipeline
+from orange_quant.data import pipeline
 
 _REQUEST_DELAY = 0.3
 
@@ -27,8 +27,6 @@ class DataSourceHooks:
 
     label: str
     raw_dir: Path
-    qlib_dir: Path
-    hourly_dir: Path
 
     def get_top_symbols(self, n: int = 50) -> list:
         """Return [(symbol, coin)] ranked by quote volume (live 24h snapshot)."""
@@ -36,10 +34,6 @@ class DataSourceHooks:
 
     def fetch_daily(self, symbol: str, start_ms: int, end_ms: int) -> list:
         """Fetch daily bars as uniform rows (closed bars only)."""
-        raise NotImplementedError
-
-    def fetch_hourly(self, symbol: str, start_ms: int, end_ms: int) -> list:
-        """Fetch 1h bars as uniform rows (closed bars only)."""
         raise NotImplementedError
 
     def resolve_symbols(self, coins) -> dict:
@@ -53,22 +47,9 @@ class DataSourceHooks:
         return pipeline.DataSource(
             label=self.label,
             raw_dir=self.raw_dir,
-            qlib_dir=self.qlib_dir,
             get_top_symbols=self.get_top_symbols,
             fetch_daily=self.fetch_daily,
             fallback_coins=self.fallback_coins,
-        )
-
-    def build_hourly_source(self) -> hourly.HourlySource:
-        return hourly.HourlySource(
-            label=self.label,
-            hourly_dir=self.hourly_dir,
-            daily_qlib_dir=self.qlib_dir,
-            daily_raw_dir=self.raw_dir,
-            phase_raw_tmpl=self.phase_raw_tmpl,
-            phase_qlib_tmpl=self.phase_qlib_tmpl,
-            fetch_hourly=self.fetch_hourly,
-            resolve_symbols=self.resolve_symbols,
         )
 
 
@@ -79,8 +60,6 @@ class BinanceSource(DataSourceHooks):
     raw_dir = Path("data/binance_raw")
     qlib_dir = Path("data/qlib_data/binance")
     hourly_dir = Path("data/binance_hourly")
-    phase_raw_tmpl = "data/binance_phase{phase:02d}_raw"
-    phase_qlib_tmpl = "data/qlib_data/binance_h{phase:02d}"
 
     _BINANCE_API = "https://api.binance.com/api/v3"
     _SKIP = {
@@ -166,8 +145,6 @@ class HyperliquidSource(DataSourceHooks):
     raw_dir = Path("data/hyperliquid_raw")
     qlib_dir = Path("data/qlib_data/hyperliquid")
     hourly_dir = Path("data/hyperliquid_hourly")
-    phase_raw_tmpl = "data/hyperliquid_phase{phase:02d}_raw"
-    phase_qlib_tmpl = "data/qlib_data/hyperliquid_h{phase:02d}"
 
     _SKIP_BASES = {"USDT", "USDE", "USDH", "USDHL", "FEUSD", "USR", "DAI", "BUIDL", "USDXL"}
     fallback_coins = ["HYPE", "PURR", "BTC", "ETH", "SOL"]

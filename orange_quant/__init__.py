@@ -1,12 +1,9 @@
 """
-Orange Quant shared core.
+Orange Quant core.
 
-Exchange-agnostic trading/experiment logic shared by the per-exchange packages
-(``biance_lgb_momtopk``, ``hyperliquid_lgb_momtopk``). Each exchange package
-provides a thin adapter (broker + :class:`~orange_quant.spec.ExchangeSpec`) and
-delegates to this core, so a fix here lands on every exchange at once.
+Reinforcement-learning trading framework: Tencent A-share and crypto daily bars
+(``orange_quant.data``), a market-agnostic MultiDiscrete PPO rotation core
+(``orange_quant.rl``), and crypto live execution (``orange_quant.live`` /
+``orange_quant.server``) through the brokers in ``orange_quant.trading``.
+Per-market differences are expressed entirely by the yaml configs.
 """
-
-__all__ = ["ExchangeSpec"]
-
-from orange_quant.spec import ExchangeSpec

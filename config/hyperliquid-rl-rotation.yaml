@@ -1,0 +1,100 @@
+# =============================================================
+# Orange Quant RL rotation — Hyperliquid 加密实盘 + 研究
+# 数据：data/hyperliquid_raw（ccxt hyperliquid，pipeline 增量下载）
+# =============================================================
+# Usage:
+#   ../.venv/bin/python -m orange_quant.data.build --exchange hyperliquid --top 20
+#   ../.venv/bin/python -m orange_quant.rl.dataset hyperliquid-rl-rotation
+#   ../.venv/bin/python -m orange_quant.rl.train hyperliquid-rl-rotation
+#   ../.venv/bin/python -m orange_quant.rl.backtest hyperliquid-rl-rotation
+#   ../.venv/bin/python -m orange_quant.server --config hyperliquid-rl-rotation --once --dry-run
+# =============================================================
+
+# -- Market --
+market:
+    type: crypto
+    venue: hyperliquid
+    benchmark_symbol: BTC                 # 回测基准币
+    quote_ccy: USDC
+
+# -- Data config --
+data:
+    raw_dir: "data/hyperliquid_raw"
+    start_time: "2019-07-01"              # 下载起点（主流币 2020 前有数据）
+    end_time: "2026-08-07"
+
+# -- Universe: 冻结为数据构建日 top-N（当前活跃池，回测有幸存偏差，文档注明） --
+universe:
+    provider: liquidity
+    membership: null
+    raw_dir: "data/hyperliquid_raw"
+    freeze_date: "2026-08-01"
+    liquidity_start: "2025-01-01"
+    top_n: 20
+    min_history_days: 250
+
+# -- Features --
+features:
+    warmup_start: "2019-07-01"
+
+# -- Training set --
+train:
+    start: "2020-01-01"
+    end: "2023-12-31"
+
+# -- Validation set --
+valid:
+    start: "2024-01-01"
+    end: "2024-12-31"
+
+# -- Test set (backtest period) --
+test:
+    start: "2025-01-01"
+    end: "2026-08-01"
+
+# -- RL environment --
+env:
+    horizon: 120
+    tiers: [0, 0.3333, 0.6667, 1.0]
+    max_weight: 0.20                      # 20 只池单币上限 20%
+    cost_rate: 0.0005                     # HL taker 费率量级
+    turnover_penalty: 0.005
+    baseline_reward: true
+
+# -- Model config --
+model:
+    hidden: [256, 256]
+    device: cpu
+
+# -- PPO config (tianshou) --
+ppo:
+    lr: 0.0003
+    gamma: 0.99
+    gae_lambda: 0.95
+    eps_clip: 0.2
+    vf_coef: 0.5
+    ent_coef: 0.001
+    max_grad_norm: 0.5
+    reward_normalization: true
+    value_clip: true
+    max_batchsize: 256
+    max_epoch: 50
+    step_per_epoch: 4096
+    step_per_collect: 4096
+    repeat_per_collect: 10
+    batch_size: 256
+    num_envs: 4
+    test_episodes: 20
+    seed: 42
+
+# -- Paths --
+paths:
+    model_dir: "models/hyperliquid-rl-rotation"
+    output_dir: "outputs/hyperliquid-rl-rotation"
+    cache_dir: "data/hyperliquid-rl-rotation"
+
+# -- Live trading (server.py / live.py) --
+trading:
+    risk_degree: 0.95                     # 目标权重总仓位缩放
+    min_notional_safety: 20.0             # 低于此名义金额不下单（USD）
+    state_file: "data/live_state/hyperliquid.json"

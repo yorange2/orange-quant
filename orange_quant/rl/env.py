@@ -21,7 +21,7 @@ import gym
 import numpy as np
 from gym import spaces
 
-from csi300_rl_rotation.data import RotationDataset
+from orange_quant.rl.dataset import RotationDataset
 
 
 class RotationEnv(gym.Env):
@@ -164,7 +164,7 @@ class RotationEnv(gym.Env):
 # self-check: random policy over the cached dataset
 # ---------------------------------------------------------------------------
 def main() -> None:
-    from csi300_rl_rotation.data import load_config, load_or_build
+    from orange_quant.rl.dataset import load_config, load_or_build
 
     cfg = load_config("csi300-rl-rotation")
     ds = load_or_build(cfg)

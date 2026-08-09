@@ -1,22 +1,40 @@
 # =============================================================
-# Orange Quant RL rotation config — csi300 top50, 离散仓位档位
-# 数据已扩展至 2026-08（腾讯行情），回测窗口全部落在新数据上
+# Orange Quant RL rotation — A股 csi300 研究（腾讯行情直连，tianshou PPO）
+# 数据：data/cn_raw（腾讯 K 线 hfq，end 锚定分页全量抓取）
 # =============================================================
 # Usage:
-#   ../.venv/bin/python -m csi300_rl_rotation.train csi300-rl-rotation
-#   ../.venv/bin/python -m csi300_rl_rotation.backtest csi300-rl-rotation
+#   ../.venv/bin/python -m orange_quant.data.tencent --symbols-file <list>   # 抓数据
+#   ../.venv/bin/python -m orange_quant.rl.dataset csi300-rl-rotation        # 构建 npz
+#   ../.venv/bin/python -m orange_quant.rl.train csi300-rl-rotation          # 训练
+#   ../.venv/bin/python -m orange_quant.rl.backtest csi300-rl-rotation       # 回测
 # =============================================================
 
-# -- qlib initialization --
-qlib_init:
-    provider_uri: "~/.qlib/qlib_data/cn_data"  # 扩展后的数据（2026-08-07）
-    region: cn                                  # A-share market
+# -- Market --
+market:
+    type: cn                                   # cn: 纯研究；crypto: 研究 + 实盘
+    venue: tencent
+    benchmark_symbol: SH000300                 # 回测基准（腾讯指数）
+    quote_ccy: CNY
 
 # -- Data config --
 data:
-    instruments: csi300                         # Stock universe: csi300 / csi500 / all
-    start_time: "2010-01-01"                    # Data start
-    end_time: "2026-08-01"                      # Data end
+    raw_dir: "data/cn_raw"                     # 腾讯抓取产物（每符号一个 CSV）
+    start_time: "2011-01-01"                   # 下载起点（覆盖预热 + 训练）
+    end_time: "2026-08-07"
+
+# -- Universe: freeze the top-N most liquid names before training --
+universe:
+    provider: liquidity                        # 纯流动性冻结（本地 CSV 计算，零额外 API）
+    membership: null                           # 可选: csi300（当前成分快照近似，akshare）
+    raw_dir: "data/cn_raw"
+    freeze_date: "2012-12-31"                  # 冻结日（train 起点前）
+    liquidity_start: "2012-01-01"              # 流动性窗口起点（冻结日前整年）
+    top_n: 50
+    min_history_days: 100                      # 2012 窗口仅 ~242 交易日，需低于窗长
+
+# -- Features --
+features:
+    warmup_start: "2012-07-01"                 # 特征预热窗（60 日动量所需，只算特征不进收益）
 
 # -- Training set --
 train:
@@ -33,23 +51,13 @@ test:
     start: "2023-01-01"
     end: "2026-08-01"
 
-# -- Universe: freeze the top-N liquid csi300 names before training starts --
-universe:
-    freeze_date: "2012-12-31"                   # 冻结日（train 起点前最后交易日）
-    top_n: 50                                   # 按流动性取 top50
-    liquidity_start: "2012-01-01"               # 流动性窗口起点（冻结日前整年）
-
-# -- Features --
-features:
-    warmup_start: "2012-07-01"                  # 特征预热窗（60 日动量所需，只算特征不进收益）
-
 # -- RL environment --
 env:
     horizon: 120                                # 训练/验证 episode 步数（约一季度）
     tiers: [0, 0.3333, 0.6667, 1.0]             # 档位 → 基础权重
     max_weight: 0.10                            # 单票权重上限（归一化后封顶）
     cost_rate: 0.001                            # 单边换手成本
-    turnover_penalty: 0.005                     # 换手正则（抑制每日剧烈调仓）
+    turnover_penalty: 0.005                     # 换手正则（只用于训练引导）
     baseline_reward: true                       # 差分奖励（相对等权基准，学 alpha）
 
 # -- Model config --

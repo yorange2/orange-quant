@@ -1,43 +1,37 @@
 ---
 name: oq-download-data
-description: Download the datasets needed for quant experiments, supporting A-shares and Binance spot daily bars
+description: Download daily bars — A-shares from the Tencent K-line API, crypto from Binance REST / Hyperliquid ccxt — into per-symbol CSVs
+argument-hint: "[--exchange binance|hyperliquid|tencent]"
 ---
 
-# Download Datasets
+# Download Data
 
-Download the datasets needed for quant experiments. Supports A-shares and Binance spot daily bars.
+Fetch daily bars into raw CSVs (gitignored). All fetches are resumable
+(existing CSVs are skipped) and idempotent.
 
-## Trigger conditions
-- "download data" / "download data"
-- "build dataset" / "build dataset"
-
-## Available datasets
-
-### A-shares (official qlib data, skip if already downloaded)
+## A-shares (Tencent)
 
 ```bash
-source .venv/bin/activate
-python scripts/csi300/build_data.py
+# full market (needs a symbol list: TSV/CSV whose first column is SH/SZ codes)
+python -m orange_quant.data.tencent --symbols-file <symbols.tsv> --workers 8
+
+# smoke test (first N symbols, force re-fetch)
+python -m orange_quant.data.tencent --symbols-file <symbols.tsv> --limit 5 --force
+
+# benchmark index only
+python -m orange_quant.data.tencent --index-only
 ```
 
-Data location: `data/qlib_data/cn_data/` (~1-2 GB)
+Output: `data/cn_raw/{SYMBOL}.csv` with `date,symbol,open,high,low,close,volume,amount`.
+hfq (backward-adjusted) prices; volume in shares (lots ×100 except STAR/indices);
+amount in CNY. **Pagination is end-anchored** — never request with year loops.
 
-### Exchange spot daily bars (top 50 by volume)
+## Crypto
 
 ```bash
-source .venv/bin/activate
-python -m orange_quant.data.build --exchange binance --top 50     # Binance USDT spot
-python -m orange_quant.data.build --exchange hyperliquid --top 50 # Hyperliquid USDC spot
+python -m orange_quant.data.build --exchange binance --top 20 --start 2019-07-01
+python -m orange_quant.data.build --exchange hyperliquid --top 20 --start 2019-07-01
 ```
 
-Legacy entries still work (thin shims): `python -m biance_lgb_momtopk.data.build --top 50`,
-`python -m hyperliquid_lgb_momtopk.data.build --top 50`.
-
-Data location: `data/qlib_data/binance/` or `data/qlib_data/hyperliquid/` (qlib format),
-`data/{binance,hyperliquid}_raw/` (raw CSV)
-
-## Notes
-
-- The first download requires internet access; time depends on network speed
-- Binance data comes from the public API, no API key required
-- The data directory is in `.gitignore` and won't be committed
+Output: `data/binance_raw/{COIN}.csv` / `data/hyperliquid_raw/...` with
+`date,open,close,high,low,volume`. Incremental: rerunning only fetches new days.

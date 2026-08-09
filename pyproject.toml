@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orange-quant"
-version = "0.1.0"
-description = "Quantitative trading algorithm framework — built on Microsoft qlib"
-requires-python = ">=3.8"
+version = "0.2.0"
+description = "Quantitative trading framework — Tencent/Binance/Hyperliquid data, tianshou RL"
+requires-python = ">=3.10"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
@@ -14,23 +14,28 @@ authors = [
 ]
 
 dependencies = [
-    "pyqlib",
-    "lightgbm",
-    "pandas",
+    "tianshou>=0.4.10,<0.5",
+    "gym==0.26.2",
+    "torch>=2.5",
     "numpy",
+    "pandas",
     "pyyaml",
+    "requests",
+    "ccxt",
+    "python-dotenv",
+    "akshare",
+    "mlflow",
+    "matplotlib",
 ]
 
 [project.optional-dependencies]
 dev = [
     "jupyter",
     "ipykernel",
-    "matplotlib",
-    "seaborn",
     "black",
     "isort",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["orange_quant*", "biance_lgb_momtopk*", "hyperliquid_lgb_momtopk*", "csi300_rl_rotation*"]
+include = ["orange_quant*"]

@@ -1,9 +1,9 @@
 """PPO training entry for the csi300 RL rotation strategy.
 
-Run: cd orange-quant && ../.venv/bin/python -m csi300_rl_rotation.train <config>
+Run: cd orange-quant && ../.venv/bin/python -m orange_quant.rl.train <config>
 
 Data is read from the npz cache (build it first with
-``python -m csi300_rl_rotation.data <config>``). Each epoch collects
+``python -m orange_quant.rl.dataset <config>``). Each epoch collects
 step_per_collect transitions from num_envs parallel training envs (random
 episode starts), runs repeat_per_collect PPO epochs, then evaluates the policy
 on fixed-seed validation envs; the best validation checkpoint is saved to
@@ -23,10 +23,10 @@ from tianshou.data import Collector, VectorReplayBuffer
 from tianshou.env import DummyVectorEnv
 from tianshou.trainer import onpolicy_trainer
 
-from csi300_rl_rotation.data import load_config, load_or_build
-from csi300_rl_rotation.env import RotationEnv
-from csi300_rl_rotation.network import MultiDiscreteActor, RotationCritic
-from csi300_rl_rotation.policy import MultiDiscretePPO
+from orange_quant.rl.dataset import load_config, load_or_build
+from orange_quant.rl.env import RotationEnv
+from orange_quant.rl.network import MultiDiscreteActor, RotationCritic
+from orange_quant.rl.policy import MultiDiscretePPO
 
 
 def make_envs(ds, segment: str, horizon: int, env_cfg: dict, n: int,

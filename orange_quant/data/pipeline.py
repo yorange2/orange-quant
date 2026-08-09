@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Shared qlib dataset build pipeline (exchange-agnostic).
+Shared daily-data build pipeline (exchange-agnostic).
 
-Given a :class:`DataSource` (fetch hooks + paths supplied by an exchange adapter),
-this incrementally downloads daily bars, writes qlib CSVs, and rebuilds the qlib
-binary store. Only ``get_top_symbols`` and ``fetch_daily`` are exchange-specific;
-everything below is identical across venues.
+Given a :class:`DataSource` (fetch hooks + paths supplied by a venue adapter),
+this incrementally downloads daily bars into per-symbol CSVs. Only
+``get_top_symbols`` and ``fetch_daily`` are exchange-specific; everything below
+is identical across venues. No qlib involvement — the CSVs feed the RL dataset
+(``orange_quant.rl.dataset``) directly.
 
 ``fetch_daily`` must return closed daily bars as uniform rows
-``[timestamp_ms, open, high, low, close, volume]`` so ``candles_to_csv`` can format
-them the same way for every exchange.
+``[timestamp_ms, open, high, low, close, volume]`` so ``candles_to_csv`` can
+format them the same way for every exchange.
 """
 
 import time
@@ -27,7 +28,6 @@ _REQUEST_DELAY = 0.3
 class DataSource:
     label: str                                   # e.g. "Binance" / "Hyperliquid"
     raw_dir: Path                                # raw CSV dir
-    qlib_dir: Path                               # qlib binary dir
     get_top_symbols: Callable[[int], list]       # (n) -> [(symbol, coin)]
     fetch_daily: Callable[[str, int, int], list]  # (symbol, start_ms, end_ms) -> rows
     fallback_coins: List[str] = field(default_factory=list)
@@ -43,24 +43,17 @@ def _ms_to_date(ms: int) -> str:
 
 
 def candles_to_csv(candles: list, coin: str) -> str:
-    """Uniform OHLCV rows [ts, o, h, l, c, v] -> qlib CSV."""
-    lines = ["date,open,close,high,low,volume,factor"]
+    """Uniform OHLCV rows [ts, o, h, l, c, v] -> CSV (date,open,close,high,low,volume)."""
+    lines = ["date,open,close,high,low,volume"]
     for ts, o, h, l, c, v in candles:
         date = _ms_to_date(ts)
-        lines.append(f"{date},{o},{c},{h},{l},{v},1.0")
+        lines.append(f"{date},{o},{c},{h},{l},{v}")
     return "\n".join(lines)
 
 
 def load_coins(source: DataSource) -> list:
-    """Active coin list: qlib instruments, falling back to raw CSVs,
-    then live top-volume pairs, then the static fallback."""
-    inst_file = source.qlib_dir / "instruments" / "all.txt"
-    if inst_file.exists():
-        coins = [line.split("\t")[0]
-                 for line in inst_file.read_text().strip().splitlines()
-                 if "\t" in line]
-        if coins:
-            return coins
+    """Active coin list: raw CSVs first, then live top-volume pairs,
+    then the static fallback."""
     if source.raw_dir.exists():
         coins = sorted(f.stem for f in source.raw_dir.glob("*.csv"))
         if coins:
@@ -98,80 +91,10 @@ def _stable_liquid_coins(source: DataSource, min_avg_quote_vol: float,
     return keep
 
 
-def _rebuild_qlib(source: DataSource, keep=None):
-    """Rebuild qlib binaries from the raw CSVs, returns (coins, sorted_dates).
-
-    ``keep`` (optional): restrict the qlib universe to this set of coins. Raw
-    CSVs for coins outside it stay on disk but are left out of instruments/
-    features — used to drop coins that have fallen below the liquidity floor so
-    they no longer pollute training / backtest / live selection. When None
-    (default), every downloaded CSV is included (unchanged behaviour).
-    """
-    import numpy as np
-    qlib_dir = source.qlib_dir
-    qlib_dir.mkdir(parents=True, exist_ok=True)
-
-    coins = sorted([f.stem for f in source.raw_dir.glob("*.csv")])
-    if keep is not None:
-        coins = [c for c in coins if c in keep]
-    all_dates = set()
-    inst_lines = []
-
-    for coin in coins:
-        df = pd.read_csv(source.raw_dir / f"{coin}.csv")
-        all_dates.update(df["date"].tolist())
-        inst_lines.append(f"{coin}\t{df['date'].min()}\t{df['date'].max()}")
-
-    sorted_dates = sorted(all_dates)
-
-    (qlib_dir / "calendars").mkdir(parents=True, exist_ok=True)
-    (qlib_dir / "calendars" / "day.txt").write_text("\n".join(sorted_dates))
-
-    (qlib_dir / "instruments").mkdir(parents=True, exist_ok=True)
-    (qlib_dir / "instruments" / "all.txt").write_text("\n".join(inst_lines))
-
-    features_dir = qlib_dir / "features"
-    date_to_idx = {d: i for i, d in enumerate(sorted_dates)}
-    print(f"  Building features ({len(sorted_dates)} days in the calendar)...")
-    for coin in coins:
-        df = pd.read_csv(source.raw_dir / f"{coin}.csv").set_index("date").sort_index()
-        # qlib reads features/{instrument.lower()}/, so the dir must be lowercase
-        coin_dir = features_dir / coin.lower()
-        coin_dir.mkdir(parents=True, exist_ok=True)
-        start_idx = date_to_idx.get(df.index[0], 0)
-        for field_name in ["open", "close", "high", "low", "volume", "factor"]:
-            values = df[field_name].values.astype(np.float32)
-            data = np.hstack([start_idx, values]).astype("<f")
-            data.tofile(str(coin_dir / f"{field_name}.day.bin"))
-
-    # VWAP proxy (Alpha158 requires a vwap field; use close)
-    print("  Generating VWAP proxy field (vwap=close)...")
-    if features_dir.exists():
-        for coin in coins:
-            close_bin = features_dir / coin.lower() / "close.day.bin"
-            vwap_bin = features_dir / coin.lower() / "vwap.day.bin"
-            if close_bin.exists() and not vwap_bin.exists():
-                data = np.fromfile(close_bin, dtype="<f")
-                data.tofile(str(vwap_bin))
-        print(f"  VWAP proxy field generated for {len(coins)} coins")
-
-    return coins, sorted_dates
-
-
-def rebuild_qlib(source: DataSource, keep=None):
-    """Rebuild qlib binaries from raw CSVs that are already on disk (no download).
-
-    Used by callers that produce their own CSVs — e.g. the phase resampler in
-    ``orange_quant.data.hourly``, which derives daily bars from 1h data instead
-    of downloading them.
-    """
-    return _rebuild_qlib(source, keep=keep)
-
-
 def rebuild_data(source: DataSource, top: int = 50, start: str = "2020-01-01",
                  force_download: bool = False, restrict_to_top: bool = False,
                  min_history_days: int = 0, min_avg_quote_vol: float = 0.0):
-    """Incrementally download data and rebuild qlib binaries.
+    """Incrementally download daily bars into raw CSVs.
 
     ``restrict_to_top``: when True, the rebuilt qlib universe is limited to
     coins with ``>= min_history_days`` of history AND a trailing-30-day average
@@ -243,17 +166,17 @@ def rebuild_data(source: DataSource, top: int = 50, start: str = "2020-01-01",
 
     print(f"\n  Total {total} daily bars ({new_total} newly added this run)")
 
-    print("\n[Step 2/3] Rebuilding qlib binaries...")
-    if restrict_to_top:
-        keep = _stable_liquid_coins(source, min_avg_quote_vol, min_history_days)
-        print(f"  Restricting universe to {len(keep)} coins "
-              f"(>= {min_history_days}d history AND >= ${min_avg_quote_vol:,.0f}/day "
-              f"30d-avg quote volume): {sorted(keep)}")
-    else:
-        keep = None
-    coins, dates = _rebuild_qlib(source, keep=keep)
+    coins = sorted(f.stem for f in source.raw_dir.glob("*.csv"))
+    dates = []
+    for coin in coins:
+        try:
+            df = pd.read_csv(source.raw_dir / f"{coin}.csv")
+            dates.append((df["date"].min(), df["date"].max()))
+        except Exception:
+            continue
     if not coins:
-        print("\n⚠ No data files, skipping rebuild")
+        print("\n⚠ No data files")
         return
-    print(f"\n✅ Done! {source.qlib_dir}")
-    print(f"   Coins: {len(coins)}, time range: {dates[0]} ~ {dates[-1]}")
+    print(f"\n✅ Done! {len(coins)} symbols in {source.raw_dir}")
+    if dates:
+        print(f"   Range: {min(d[0] for d in dates)} ~ {max(d[1] for d in dates)}")

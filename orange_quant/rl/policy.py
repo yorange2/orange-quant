@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 
 from tianshou.policy import PPOPolicy
 
-from csi300_rl_rotation.network import MultiCategorical
+from orange_quant.rl.network import MultiCategorical
 
 
 class MultiDiscretePPO(PPOPolicy):

@@ -1,154 +1,96 @@
 # 🍊 Orange Quant
 
-AI quantitative trading algorithm framework based on [Microsoft qlib](https://github.com/microsoft/qlib).
+Reinforcement-learning quantitative trading framework — data straight from the
+feeds (no qlib), training exclusively on tianshou.
 
-## Project structure
+## Architecture
 
 ```
-orange-quant/
-├── orange_quant/                # Core framework (exchange-agnostic)
-│   ├── experiment.py            # qlib experiment pipeline (train / backtest / DL)
-│   ├── runner.py / server.py    # Trading execution entry points
-│   ├── trading/                 # Broker ABC + simulated paper broker
-│   └── data/                    # Shared dataset pipeline, hourly phase study,
-│                                # unified build entry (--exchange) + venue hooks
-├── biance_lgb_momtopk/           # Binance adapter (data hooks + BinanceBroker + shims)
-├── hyperliquid_lgb_momtopk/      # Hyperliquid adapter (data hooks + HyperliquidBroker + shims)
-├── csi300_rl_rotation/           # A-share RL rotation (gym env + tianshou PPO)
-├── config/                     # Experiment config files
-│   ├── csi300-lgb-momtopk.yaml
-│   └── binance-lgb-momtopk.yaml
-├── scripts/                    # Utility scripts (A-share data update, sweeps)
-├── docs/ROADMAP.md             # Refactor & MPS-support roadmap
-├── Dockerfile
-└── docker-compose.yml
+orange_quant/
+├── data/
+│   ├── tencent.py          # A-share daily bars from the Tencent K-line API
+│   │                       #   (end-anchored pagination → data/cn_raw/*.csv)
+│   ├── universe.py         # liquidity-frozen universe (cn + crypto, zero extra API)
+│   ├── sources.py          # Binance (REST) / Hyperliquid (ccxt) fetch hooks
+│   └── pipeline.py         # incremental crypto download loop (CSV resumable)
+├── rl/                     # market-agnostic RL core (the research engine)
+│   ├── dataset.py          # bars → 10 OHLCV factors → npz cache (z-score fit on train)
+│   ├── env.py              # RotationEnv: obs = features + current tiers,
+│   │                       #   action = MultiDiscrete tiers, next-day-open execution
+│   ├── network.py/policy.py# MultiDiscrete PPO (tianshou 0.4.10)
+│   ├── train.py            # onpolicy_trainer + valid-segment best checkpoint
+│   ├── backtest.py         # test-segment rollout, NAV/turnover metrics, 3-line chart
+│   └── metrics.py / smoke_test.py
+├── trading/
+│   ├── broker.py           # Broker ABC (10 methods)
+│   ├── binance_broker.py   # ccxt spot, reduce-only blacklist
+│   ├── hyperliquid_broker.py  # ccxt, wallet auth
+│   └── paper_broker.py     # simulated account
+├── live.py                 # live runner: bars → features → policy → tiers → orders
+├── server.py               # daily cron loop (--config/--once/--dry-run, heartbeat)
+├── blacklist.py / healthcheck.py
+└── config/                 # one yaml per market
+    ├── csi300-rl-rotation.yaml       # A-share research
+    ├── binance-rl-rotation.yaml      # Binance live + research
+    └── hyperliquid-rl-rotation.yaml  # Hyperliquid live + research
 ```
 
-Venue-specific logic is confined to `orange_quant.data.sources` (fetch hooks)
-and the per-venue `Broker` implementations; everything else is shared.
+Market differences live only in the data layer (source/universe/benchmark) and
+the execution layer (broker); the RL train/backtest/env core is identical across
+markets and is parameterized entirely by the yaml.
 
 ## Quick start
 
-### 1. Install dependencies
-
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install git+https://github.com/microsoft/qlib.git
-pip install lightgbm pandas numpy pyyaml ccxt python-dotenv
-# macOS: brew install libomp
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .                      # pyproject deps: tianshou/gym/torch/ccxt/...
 ```
 
-### 2. Download data and run an experiment
+### A-share research
 
 ```bash
-# A-shares
-python scripts/csi300/build_data.py
-python -c "from biance_lgb_momtopk.workflow.experiment import run_from_yaml; run_from_yaml('config/csi300-lgb-momtopk.yaml')"
-
-# Binance
-python -m biance_lgb_momtopk.data.build --top 50
-python -c "from biance_lgb_momtopk.workflow.experiment import run_from_yaml; run_from_yaml('config/binance-lgb-momtopk.yaml')"
-
-# A-share RL rotation (csi300 top50, 离散仓位档位 PPO)
-python -m csi300_rl_rotation.data csi300-rl-rotation        # 构建特征 → npz 缓存
-python -m csi300_rl_rotation.train csi300-rl-rotation       # PPO 训练 (~8min CPU)
-python -m csi300_rl_rotation.backtest csi300-rl-rotation    # test 段回测 + nav.png
+# 1. fetch daily bars (first column of a TSV/CSV = SH/SZ symbols)
+python -m orange_quant.data.tencent --symbols-file <symbols.tsv>   # ~4800 names
+# 2. build the dataset (freezes top-50 liquid names, caches npz)
+python -m orange_quant.rl.dataset csi300-rl-rotation
+# 3. train (CPU, ~8 min for 50 epochs) and backtest
+python -m orange_quant.rl.train csi300-rl-rotation
+python -m orange_quant.rl.backtest csi300-rl-rotation
 ```
 
-## RL rotation strategy (`csi300_rl_rotation`)
+### Crypto live
 
-基于 tianshou PPO 的日频轮动策略：动作 = 每只股票每日从 4 个仓位档位
-（空仓/轻仓/半仓/满仓）独立选择，档位映射权重后次一交易日开盘执行。
-训练/评估/回测全程无前视（universe 在训练前冻结、z-score 只拟合 train 段、
-obs ≤ 收盘、reward 只用次日数据）。
+```bash
+python -m orange_quant.data.build --exchange binance --top 20      # daily bars
+python -m orange_quant.rl.dataset binance-rl-rotation
+python -m orange_quant.rl.train binance-rl-rotation
+python -m orange_quant.rl.backtest binance-rl-rotation
 
-- 数据：`~/.qlib/qlib_data/cn_data`，csi300 按 2012 年成交量取 top50（冻结），
-  10 个 OHLCV 简因子（$amount 2020-09 前缺失，只用 $volume 代理流动性）
-- 环境：`gym.Env`（obs = 特征 + 当前档位；reward = 组合收益 − 成本 − 换手正则，
-  训练用差分奖励 vs 等权基准）
-- 训练：MultiDiscrete PPO（tianshou 0.4.10），valid 段固定种子评估选 best
-- 回测：test 段确定性 rollout，输出 NAV/持仓/换手 + 指标 json + 三线图
+# paper trade once, then live (set keys in .env)
+python -m orange_quant.server --config binance-rl-rotation --once --dry-run
+python -m orange_quant.server --config binance-rl-rotation --once
+```
 
 ## Experiment results
 
-| Dataset | Universe | IC | Excess return (net of costs) | IR (net of costs) |
-|--------|------|-----|-------------|-----------|
-| A-share CSI300 | 820 | 0.027 | 1.0% | 0.11 |
-| Binance top-20 blue chips | 20 | 0.034 | 17.3% | 0.77 |
-| A-share RL rotation (2023–2026 test) | 50 | — | −9.7% vs 等权 | −0.45 |
+| Market | Universe | Period | Annual ret (net) | Sharpe | vs benchmark |
+|--------|----------|--------|------------------|--------|--------------|
+| A-share RL rotation | top-50 liquid (frozen 2012) | test 2023–2026 | −5.0% | −0.31 | equal-weight +3.0%/yr |
+| Binance RL rotation | top-20 (frozen 2026) | test 2025–2026 | +70.9% | 0.55 | BTC +50.2%/yr (3-epoch smoke) |
 
-## Automated trading
+Data-quality note: the new Tencent-only dataset fixes the legacy store's
+2022-01~2022-05 data hole (4.5 months of zeros) and uses hfq (correct
+ex-dividend returns); validation-segment mean reward improved from +0.87%/day
+(legacy data) to +1.57%/day. Strategy alpha vs equal-weight is still an open
+research question (see ROADMAP).
 
-### Local
+## Notes
 
-```bash
-source .venv/bin/activate
-
-# DRY RUN (analyze only, no orders placed)
-python -m biance_lgb_momtopk.server --once --dry-run --model models/binance-lgb-momtopk.pkl
-
-# Live trading
-python -m biance_lgb_momtopk.server --once --model models/binance-lgb-momtopk.pkl
-
-# View holdings
-python -c "
-from dotenv import load_dotenv; load_dotenv(override=True)
-from biance_lgb_momtopk.trading.broker import BinanceBroker
-broker = BinanceBroker(testnet=False, paper=False)
-for a, amt in sorted(broker.get_balances().items()):
-    if amt > 0.0001:
-        print(f'  {a}: {amt:.6f}')
-"
-```
-
-### Docker deployment
-
-```bash
-# Prepare .env (Binance API key)
-cat > .env << EOF
-BINANCE_API_KEY=your_api_key
-BIANCE_SECRET_KEY=your_secret_key
-EOF
-
-# Download data + place the model file
-python -m biance_lgb_momtopk.data.build --top 50
-mkdir -p models
-cp /path/to/binance-lgb-momtopk.pkl models/
-
-# Upload to the server
-scp -r models data/qlib_data/binance user@server:~/orange-quant/
-# Or run build_data and training directly on the server to produce the model
-
-# Start
-docker compose --profile live up -d  --build    # live trading
-docker compose --profile dry-run up -d  --build # observe only (no orders)
-docker compose --profile once up --build        # run once manually (for testing)
-docker logs -f orange-quant             # logs
-docker compose down                     # stop
-```
-
-### Upgrading
-
-```bash
-git pull
-docker compose up -d --build    # rebuild and replace the old container
-```
-
-### Parameters
-
-| Parameter | Default | Description |
-|------|--------|------|
-| `--hour` | 0 | Rebalance time (UTC hour) |
-| `--minute` | 15 | Rebalance time (minute) |
-| `--topk` | 5 | Number of positions to hold |
-| `--lookback` | 160 | Lookback window in days |
-| `--model` | models/binance-lgb-momtopk.pkl | LightGBM model path; falls back to the momentum strategy if not specified |
-| `--dry-run` | — | Analyze only, no orders placed |
-| `--once` | — | Run once then exit |
-| `--testnet` | — | Use the Binance testnet |
-| `--retrain` | — | Refresh data and retrain the model before rebalancing |
-
-## License
-
-MIT
+- Data is backward-adjusted (hfq); never use qfq for investment series (re-anchored
+  by each dividend = look-ahead).
+- The Tencent API returns a trailing 640-row window anchored at the request's end
+  date — fetching must use end-anchored pagination (the legacy 3-year loop had a
+  data hole in 2021).
+- Live trading is idempotent per day via the state file; `--force` reruns.
+- mlflow file store requires `MLFLOW_ALLOW_FILE_STORE=true` (set in train.py and
+  the Docker image).
