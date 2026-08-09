@@ -39,6 +39,7 @@ class RotationEnv(gym.Env):
         cost_rate: float = 0.001,
         turnover_penalty: float = 0.0,
         baseline_reward: bool = False,
+        decision_every: int = 1,
         seed: Optional[int] = None,
         start_idx: Optional[int] = None,
     ) -> None:
@@ -54,6 +55,8 @@ class RotationEnv(gym.Env):
         self.cost_rate = cost_rate
         self.turnover_penalty = turnover_penalty
         self.baseline_reward = baseline_reward
+        self.decision_every = int(decision_every)  # frame-skip: act every N bars
+        assert self.decision_every >= 1
         self._rng = np.random.default_rng(seed)
         self._start_idx = start_idx
         if start_idx is not None:
@@ -65,19 +68,20 @@ class RotationEnv(gym.Env):
         )
         self.action_space = spaces.MultiDiscrete(np.array([4] * n, dtype=np.int64))
 
-        self._t: int = 0          # current day index (decision day)
+        self._t: int = 0          # current bar index (decision day)
         self._g: np.ndarray       # current tier vector (50,), int
         self._w: np.ndarray       # current weights (50,), float
-        self._step_in_ep: int = 0
+        self._step_in_ep: int = 0  # policy steps (each = decision_every bars)
 
     # ------------------------------------------------------------------ core
     def reset(self, seed: Optional[int] = None, options=None):
         if seed is not None:
             self._rng = np.random.default_rng(seed)
+        bars = self.horizon * self.decision_every
         if self._start_idx is not None:
             self._t = self._start_idx
         else:
-            hi = self._split_hi - self.horizon
+            hi = self._split_hi - bars
             assert self._split_lo <= hi, "segment shorter than horizon"
             self._t = int(self._rng.integers(self._split_lo, hi + 1))
         self._g = np.zeros(self.ds.n_stocks, dtype=np.int64)
@@ -86,6 +90,30 @@ class RotationEnv(gym.Env):
         return self._obs(), {}
 
     def step(self, action: np.ndarray):
+        """One policy step = ``decision_every`` bars.
+
+        The action is applied on the first bar; the remaining bars roll the
+        current holdings (no turnover, no penalty) — the academic frame-skip /
+        action-repetition pattern. Reward is the sum over the skipped bars.
+        """
+        action = np.asarray(action, dtype=np.int64)
+        assert action.shape == (self.ds.n_stocks,), f"bad action shape {action.shape}"
+        assert (0 <= action).all() and (action < 4).all(), "tier out of range"
+
+        total = 0.0
+        info = {}
+        done = False
+        for i in range(self.decision_every):
+            act = action if i == 0 else self._g.copy()
+            obs, rew, term, trunc, step_info = self._step_raw(act)
+            total += rew
+            info = step_info
+            if term or trunc:
+                done = True
+                break
+        return obs, total, done, trunc, info
+
+    def _step_raw(self, action: np.ndarray):
         action = np.asarray(action, dtype=np.int64)
         assert action.shape == (self.ds.n_stocks,), f"bad action shape {action.shape}"
         assert (0 <= action).all() and (action < 4).all(), "tier out of range"
@@ -108,7 +136,8 @@ class RotationEnv(gym.Env):
         self._g, self._w = action, new_w
         self._t = t1
         self._step_in_ep += 1
-        terminated = self._step_in_ep >= self.horizon
+        # termination is on raw bars (horizon is in policy steps)
+        terminated = self._step_in_ep >= self.horizon * self.decision_every
         truncated = False
         info = {
             "date": str(self.ds.dates[self._t]),

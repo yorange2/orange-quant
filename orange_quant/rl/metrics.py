@@ -10,16 +10,20 @@ import numpy as np
 def return_metrics(nav: np.ndarray,
                    benchmark_nav: Optional[np.ndarray] = None,
                    turnover: Optional[np.ndarray] = None,
-                   annualize: float = 252.0) -> Dict[str, float]:
+                   annualize: float = 252.0,
+                   bars_per_year: float = 252.0) -> Dict[str, float]:
     """Compute standard metrics from a NAV series.
 
     nav: (T,) cumulative NAV (nav[0] = 1 + first-day return).
-    turnover: (T,) daily one-sided turnover |Δw|; annualized as sum over
-        (T - 1) days scaled to a year.
+    turnover: (T,) one-sided turnover |Δw| per bar; annualized as
+        sum / years.
+    annualize: bars per year for vol/sharpe scaling (252 daily, 6048 hourly).
+    years is derived from bars_per_year so annualized returns stay correct
+    at any frequency (defaults to annualize for back-compat).
     """
     rets = np.diff(nav) / nav[:-1]
     T = len(rets)
-    years = T / annualize
+    years = T / bars_per_year
     total = nav[-1] / nav[0] - 1.0
     ann_ret = (nav[-1] / nav[0]) ** (1 / years) - 1 if years > 0 and nav[0] > 0 else np.nan
     ann_vol = float(np.std(rets, ddof=1) * np.sqrt(annualize))

@@ -15,17 +15,20 @@
 
 ## 路线图（按性价比排序，可独立落地）
 
-### R1. 小时频数据（数据量 ×24）⭐ 最高优先
+### R1. 小时频数据（数据量 ×24）✅ 已完成（2026-08-09）
 
-**动机**：币安 7×24，小时频是日频 24 倍的数据红利，纯工程改动，无研究风险。
+**动机**：币安 7×24，小时频是日频 24 倍的数据红利。
 
-- [ ] `data/build.py` 支持 `--freq 1h`（`BinanceSource.fetch_hourly` 钩子仍在，未删）
-- [ ] `rl/dataset.py` bar_reader 支持小时 CSV（`date,open,close,high,low,volume`，UTC 对齐）
-- [ ] 小时频日历（2595 天 → ~62000 小时行），split 边界按时间戳
-- [ ] env horizon 语义：120 步小时 = 5 天持仓周期（贴近真实交易粒度）
-- [ ] 验证：train 快跑 5 epoch → 与日频基线对比 valid/test
+- [x] `data/build.py` 支持 `--freq 1h`（`BinanceSource.fetch_hourly` 钩子）
+- [x] 小时 CSV 时间戳粒度修复（`candles_to_csv` 小时感知，曾把 24 根压成 1 天）
+- [x] env **frame-skip**（`decision_every`，学术 action-repetition）：日决策 + 小时观测
+- [x] policy **hold_bias**（保持先验直击 argmax 跳变——reward 惩罚管不住的部署不稳定）
+- [x] metrics 频率修正（bars_per_year 参数化 + backtest 基准按决策步重采样）
 
-**预期**：训练样本 1000 → 24000+ 步，动作空间（4⁹）不再过拟合。
+**结果**（test 2025-2026，9 只历史池）：
+- 纯小时决策失败：换手 873-1149×/年，收益 −87~93%（小时噪声 argmax 跳变）
+- **frame-skip + hold_bias 成功压住换手（17.9×），但收益 −28.5% 未超越日频（−18.4%）**
+- 结论：数据 ×24 红利需要**特征层配合**（日内模式特征），纯换频率不提升收益
 
 ### R2. 历史池扩大 + train 窗口提前（池 ×3、时序 ×1.5）
 

@@ -1,0 +1,102 @@
+# =============================================================
+# Orange Quant RL rotation — Binance 加密实盘 + 研究
+# 数据：data/binance_h1_raw（Binance REST klines，pipeline 增量下载）
+# =============================================================
+# Usage:
+#   ../.venv/bin/python -m orange_quant.data.build --exchange binance --top 20
+#   ../.venv/bin/python -m orange_quant.rl.dataset binance-h1-rl-rotation
+#   ../.venv/bin/python -m orange_quant.rl.train binance-h1-rl-rotation
+#   ../.venv/bin/python -m orange_quant.rl.backtest binance-h1-rl-rotation
+#   ../.venv/bin/python -m orange_quant.server --config binance-h1-rl-rotation --once --dry-run
+# =============================================================
+
+# -- Market --
+market:
+    type: crypto
+    venue: binance
+    benchmark_symbol: BTC                 # 回测基准币
+    quote_ccy: USDT
+
+# -- Data config --
+data:
+    raw_dir: "data/binance_h1_raw"
+    start_time: "2017-01-01"              # 下载起点（小时频全历史）
+    end_time: "2026-08-07"
+
+# -- Universe: 历史冻结（train 起点前），只含当时已存在的币，消除新币前视 --
+universe:
+    provider: liquidity
+    membership: null
+    raw_dir: "data/binance_h1_raw"
+    freeze_date: "2019-12-31"                 # train 起点前最后一天
+    liquidity_start: "2019-01-01"             # 冻结窗口（数据下载起点）
+    top_n: 50
+    min_history_days: 200                     # 2019 窗口 ~242 交易日
+
+# -- Features --
+features:
+    warmup_start: "2019-07-01"
+
+# -- Training set --
+train:
+    start: "2020-01-01"
+    end: "2023-12-31"
+
+# -- Validation set --
+valid:
+    start: "2024-01-01"
+    end: "2024-12-31"
+
+# -- Test set (backtest period) --
+test:
+    start: "2025-01-01"
+    end: "2026-08-01"
+
+# -- RL environment --
+env:
+    horizon: 120                                # 120 决策步 × 24h = 120 天持仓周期
+    tiers: [0, 0.3333, 0.6667, 1.0]
+    max_weight: 0.20                      # 9 只历史池单币上限 20%（隐含 ≥5 只分散）
+    cost_rate: 0.0005                     # 币安 taker 费率量级（与频率无关）
+    turnover_penalty: 0.02                # 换手正则（决策步标定=日频语义，frame-skip 下每决策步结算）
+    baseline_reward: true
+    decision_every: 24                 # frame-skip：每 24 小时决策一次（日决策+小时观测）
+
+# -- Model config --
+model:
+    hidden: [256, 256]
+    device: cpu
+
+# -- PPO config (tianshou) --
+ppo:
+    lr: 0.0003
+    gamma: 0.99
+    gae_lambda: 0.95
+    eps_clip: 0.2
+    vf_coef: 0.5
+    ent_coef: 0.001
+    hold_bias: 0.5                        # 保持先验：压远离当前持仓档位的 logits（训练/部署一致）
+    max_grad_norm: 0.5
+    reward_normalization: true
+    value_clip: true
+    max_batchsize: 256
+    max_epoch: 50
+    step_per_epoch: 4096
+    step_per_collect: 4096
+    repeat_per_collect: 10
+    batch_size: 256
+    num_envs: 4
+    test_episodes: 20
+    seed: 42
+
+# -- Paths --
+paths:
+    model_dir: "models/binance-h1-rl-rotation"
+    output_dir: "outputs/binance-h1-rl-rotation"
+    cache_dir: "data/binance-h1-rl-rotation"
+
+# -- Live trading (server.py / live.py) --
+trading:
+    risk_degree: 0.95                     # 目标权重总仓位缩放
+    min_notional_safety: 20.0             # 低于此名义金额不下单（USD）
+    state_file: "data/live_state/binance.json"

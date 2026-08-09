@@ -43,6 +43,7 @@ def load_policy(cfg: dict, ds, device):
     policy = MultiDiscretePPO(
         actor, critic, optim,
         discount_factor=0.99, deterministic_eval=True,
+        hold_bias=cfg.get("ppo", {}).get("hold_bias", 0.0),
         action_space=gym.spaces.MultiDiscrete(
             np.array([4] * ds.n_stocks, dtype=np.int64)),
         observation_space=gym.spaces.Box(
@@ -89,15 +90,18 @@ def main() -> None:
     test_s, test_e = ds.split_idx["test"]
     dates = ds.dates[test_s : test_e + 1]
     # last day's return needs t+1 data, which ends at the data boundary — the
-    # final settlement day is test_e (rollout runs test_e - test_s steps)
-    horizon = test_e - test_s
+    # final settlement day is test_e. horizon is in *policy* steps: raw bars
+    # divided by decision_every (frame-skip).
     env_cfg = cfg["env"]
+    decision_every = int(env_cfg.get("decision_every", 1))
+    horizon = (test_e - test_s) // decision_every
 
     # ---- RL policy rollout (track weights per day for turnover) ----
     env = RotationEnv(ds, segment="test", horizon=horizon,
                       tiers=env_cfg["tiers"], max_weight=env_cfg["max_weight"],
                       cost_rate=env_cfg["cost_rate"],
                       turnover_penalty=0.0,  # no training-style penalty at test
+                      decision_every=env_cfg.get("decision_every", 1),
                       start_idx=test_s, seed=0)
     w_prev = None
     rows = []
@@ -125,9 +129,12 @@ def main() -> None:
 
     # ---- benchmarks ----
     s = test_s
-    ew_ret = (ds.r_gap[s : s + horizon] + ds.r_intra[s : s + horizon]).mean(axis=1)
-    ew_nav = np.cumprod(1.0 + ew_ret)
-    bench_nav = load_benchmark(ds, cfg)
+    # equal-weight on the *raw* bars, resampled to policy steps so the
+    # benchmark NAV lines up row-for-row with the RL rollout
+    raw_n = horizon * decision_every
+    ew_ret = (ds.r_gap[s : s + raw_n] + ds.r_intra[s : s + raw_n]).mean(axis=1)
+    ew_nav = np.cumprod(1.0 + ew_ret)[::decision_every]
+    bench_nav = load_benchmark(ds, cfg)[::decision_every]
 
     t = min(len(rl), len(ew_nav), len(bench_nav))
     navs = {
@@ -135,10 +142,20 @@ def main() -> None:
         "等权 top50": ew_nav[:t],
         "SH000300": bench_nav[:t],
     }
+    # bars-per-year from the *policy-step* spacing in the rollout rows
+    # (daily decisions 252; sub-daily e.g. raw-hourly 6048)
+    if len(rl) > 1:
+        step_dates = pd.to_datetime(rl["date"]).to_numpy().astype("datetime64[D]").astype(float)
+        gap_days = np.median(np.diff(step_dates))
+        bars_per_year = 252.0 if gap_days >= 1.0 else 252.0 * 24
+    else:
+        bars_per_year = 252.0
     metrics = return_metrics(
         rl["nav"].to_numpy()[:t],
         benchmark_nav=ew_nav[:t],
         turnover=rl["turnover"].to_numpy()[:t],
+        bars_per_year=bars_per_year,
+        annualize=bars_per_year,
     )
     metrics["benchmark_equal_weight_nav"] = float(ew_nav[-1])
     metrics["benchmark_csi300_nav"] = float(bench_nav[-1])

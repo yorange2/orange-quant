@@ -27,6 +27,7 @@ class DataSourceHooks:
 
     label: str
     raw_dir: Path
+    h1_raw_dir: Path
 
     def get_top_symbols(self, n: int = 50) -> list:
         """Return [(symbol, coin)] ranked by quote volume (live 24h snapshot)."""
@@ -47,8 +48,10 @@ class DataSourceHooks:
         return pipeline.DataSource(
             label=self.label,
             raw_dir=self.raw_dir,
+            h1_raw_dir=getattr(self, "h1_raw_dir", None),
             get_top_symbols=self.get_top_symbols,
             fetch_daily=self.fetch_daily,
+            fetch_hourly=getattr(self, "fetch_hourly", None),
             fallback_coins=self.fallback_coins,
         )
 
@@ -58,8 +61,8 @@ class BinanceSource(DataSourceHooks):
 
     label = "Binance"
     raw_dir = Path("data/binance_raw")
+    h1_raw_dir = Path("data/binance_h1_raw")
     qlib_dir = Path("data/qlib_data/binance")
-    hourly_dir = Path("data/binance_hourly")
 
     _BINANCE_API = "https://api.binance.com/api/v3"
     _SKIP = {
@@ -143,8 +146,8 @@ class HyperliquidSource(DataSourceHooks):
 
     label = "Hyperliquid"
     raw_dir = Path("data/hyperliquid_raw")
+    h1_raw_dir = Path("data/hyperliquid_h1_raw")
     qlib_dir = Path("data/qlib_data/hyperliquid")
-    hourly_dir = Path("data/hyperliquid_hourly")
 
     _SKIP_BASES = {"USDT", "USDE", "USDH", "USDHL", "FEUSD", "USR", "DAI", "BUIDL", "USDXL"}
     fallback_coins = ["HYPE", "PURR", "BTC", "ETH", "SOL"]
@@ -224,6 +227,7 @@ class HyperliquidSource(DataSourceHooks):
             qlib_dir=self.qlib_dir,
             get_top_symbols=self.get_top_symbols,
             fetch_daily=self.fetch_daily,
+            fetch_hourly=getattr(self, "fetch_hourly", None),
             fallback_coins=self.fallback_coins,
         )
 

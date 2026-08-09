@@ -42,6 +42,7 @@ def make_envs(ds, segment: str, horizon: int, env_cfg: dict, n: int,
             cost_rate=env_cfg["cost_rate"],
             turnover_penalty=turnover_penalty,
             baseline_reward=baseline_reward,
+            decision_every=env_cfg.get("decision_every", 1),
             seed=None if seed_base is None else seed_base + i,
         ))
         for i in range(n)
@@ -95,6 +96,7 @@ def main() -> None:
         reward_normalization=ppo["reward_normalization"],
         value_clip=ppo["value_clip"],
         deterministic_eval=True,
+        hold_bias=ppo.get("hold_bias", 0.0),
         action_space=train_envs.action_space[0],  # 0.4.10: per-env list
         observation_space=train_envs.observation_space[0],
     )

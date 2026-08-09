@@ -68,7 +68,9 @@ def freeze_universe(
         if not {"open", "high", "low", "close", "volume"}.issubset(df.columns):
             continue
         w = df[(df["date"] >= lo) & (df["date"] <= freeze)]
-        if len(w) < min_history_days:
+        # min_history_days means calendar days — count unique dates so the
+        # check works for both daily and hourly bars
+        if w["date"].dt.date.nunique() < min_history_days:
             continue
         if "amount" in w.columns and w["amount"].notna().mean() > 0.5:
             lq = w["amount"].mean()
