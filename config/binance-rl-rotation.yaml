@@ -58,7 +58,7 @@ env:
     tiers: [0, 0.3333, 0.6667, 1.0]
     max_weight: 0.20                      # 9 只历史池单币上限 20%（隐含 ≥5 只分散）
     cost_rate: 0.0005                     # 币安 taker 费率量级
-    turnover_penalty: 0.005
+    turnover_penalty: 0.02                # 换手正则（三轮实验最优，0.05 边际反转）
     baseline_reward: true
 
 # -- Model config --
