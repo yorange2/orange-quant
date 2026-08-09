@@ -41,10 +41,33 @@ def _idx(ds: RotationDataset, day, side: str) -> int:
 
 
 def refresh_data(cfg: dict) -> None:
-    """Incremental bar refresh for crypto venues (CSV resumable)."""
+    """Incremental bar refresh (CSV resumable) for the venue's raw store."""
     venue = cfg["market"]["venue"]
     if venue == "tencent":
-        print("[retrain] tencent: data refresh not automated (run tencent.py)")
+        # A-share: extend every existing CSV from its last date (incremental)
+        from orange_quant.data.tencent import fetch_symbol
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from pathlib import Path as _P
+
+        raw = _P(cfg["data"]["raw_dir"])
+        raw.mkdir(parents=True, exist_ok=True)
+        symbols = sorted(f.stem for f in raw.glob("*.csv"))
+        end = cfg["data"]["end_time"]
+        print(f"[retrain] tencent: incremental refresh of {len(symbols)} CSVs "
+              f"(through {end})")
+        ok, fail = 0, {}
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futs = {ex.submit(fetch_symbol, s, "2011-01-01", end, raw): s
+                    for s in symbols}
+            for fut in as_completed(futs):
+                sym, err = fut.result()
+                if err:
+                    fail[sym] = err
+                else:
+                    ok += 1
+        if fail:
+            print(f"[retrain] tencent refresh failures: {list(fail)[:5]}")
+        print(f"[retrain] tencent refresh done: ok={ok}")
         return
     from orange_quant.data.sources import BinanceSource, HyperliquidSource
 
@@ -87,6 +110,12 @@ def main() -> None:
     if b <= a or vb <= va:
         raise SystemExit(f"[retrain] insufficient data for window "
                          f"{tr_start.date()}~{tr_end.date()}")
+    # the valid segment must fit at least one training horizon — A-share
+    # trading calendars have ~21 bars/month, so 6 months can be < horizon
+    need = cfg["env"]["horizon"] * cfg["env"].get("decision_every", 1)
+    while vb - va < need and va_start > tr_start:
+        va_start -= pd.DateOffset(months=1)
+        va = _idx(ds, va_start, "start")
     ds_w = replace(ds, split_idx={"train": (a, b), "valid": (va, vb),
                                   "test": (vb, b)})
     print(f"[retrain] {args.config}: train {ds.dates[a].astype('datetime64[D]')}"

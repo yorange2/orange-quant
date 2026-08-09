@@ -114,10 +114,38 @@ def fetch_daily(symbol: str, start: str, end: str) -> pd.DataFrame:
 
 def fetch_symbol(symbol: str, start: str, end: str, out_dir: Path,
                  force: bool = False) -> Tuple[str, Optional[str]]:
-    """Fetch one symbol and write data/cn_raw/{SYMBOL}.csv. (symbol, err)."""
+    """Fetch one symbol and write data/cn_raw/{SYMBOL}.csv. (symbol, err).
+
+    Resumable: an existing CSV is extended incrementally from its last date
+    (unless ``force``, which re-fetches everything); fully up-to-date files
+    are skipped.
+    """
     csv_path = out_dir / f"{symbol}.csv"
     if csv_path.exists() and not force:
-        return symbol, None  # resumable
+        existing = pd.read_csv(csv_path, parse_dates=["date"])
+        last = str(existing["date"].max().date())
+        if last >= end:
+            return symbol, None  # already up to date
+        fetch_start = last  # fetch_daily is end-anchored, start is a floor
+        try:
+            df = fetch_daily(symbol, fetch_start, end)
+        except Exception as e:  # noqa: BLE001 - per-symbol failure isolation
+            return symbol, f"{type(e).__name__}: {e}"
+        if df.empty:
+            return symbol, None  # nothing new
+        if not symbol.startswith(("SH688", "SZ399", "SH000")):
+            df["volume"] = df["volume"] * 100
+        df["amount"] = df["amount"] * 10000
+        df = df.dropna(subset=["close"])
+        fresh = df[df["date"] > last]
+        if fresh.empty:
+            return symbol, None
+        fresh["symbol"] = symbol
+        combined = pd.concat([existing, fresh]).drop_duplicates(
+            subset="date", keep="last").sort_values("date")
+        combined[["date", "symbol", "open", "high", "low", "close",
+                  "volume", "amount"]].to_csv(csv_path, index=False)
+        return symbol, None
 
     try:
         df = fetch_daily(symbol, start, end)

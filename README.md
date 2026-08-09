@@ -82,14 +82,22 @@ Data-quality note: the new Tencent-only dataset fixes the legacy store's
 2022-01~2022-05 data hole (4.5 months of zeros) and uses hfq (correct
 ex-dividend returns); validation-segment mean reward improved from +0.87%/day
 (legacy data) to +1.57%/day. Strategy alpha vs equal-weight is still an open
-research question (see ROADMAP).
+research question (see ROADMAP). Backtesting a freshly-retrained model over
+the fixed test segment is NOT strictly out-of-sample (its train window
+contains the test dates) — trust the walk-forward OOS numbers
+(scripts/walkforward.py) for honest estimates; live deployment itself is
+always OOS (the retrain at day T only sees data before T).
 
 ## Live retraining (walk-forward schedule)
 
 ```bash
 # quarterly, from cron (e.g. 1st of Jan/Apr/Jul/Oct 03:00):
 # 0 3 1 1,4,7,10 * cd /path/to/orange-quant && .venv/bin/python -m scripts.retrain_live --config binance-rl-rotation
+# 0 3 1 1,4,7,10 * cd /path/to/orange-quant && .venv/bin/python -m scripts.retrain_live --config csi300-rl-rotation
 ```
+A-share (Tencent) refresh is incremental too (CSVs extended from their last
+date; A-share valid windows auto-extend to cover the training horizon on
+trading calendars).
 Retrains on the trailing 3 years (valid = last 6 months), refreshes the raw
 bars/npz, and atomically swaps `models/<cfg>/policy_best.pth` — the live
 server loads the checkpoint on every daily run, so the new model takes effect
