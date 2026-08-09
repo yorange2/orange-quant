@@ -20,18 +20,18 @@ market:
 # -- Data config --
 data:
     raw_dir: "data/binance_raw"
-    start_time: "2019-07-01"              # 下载起点（主流币 2020 前有数据）
+    start_time: "2019-01-01"              # 下载起点（覆盖冻结窗口）
     end_time: "2026-08-07"
 
-# -- Universe: 冻结为数据构建日 top-N（当前活跃池，回测有幸存偏差，文档注明） --
+# -- Universe: 历史冻结（train 起点前），只含当时已存在的币，消除新币前视 --
 universe:
     provider: liquidity
     membership: null
     raw_dir: "data/binance_raw"
-    freeze_date: "2026-08-01"
-    liquidity_start: "2025-01-01"
-    top_n: 20
-    min_history_days: 250
+    freeze_date: "2019-12-31"                 # train 起点前最后一天
+    liquidity_start: "2019-01-01"             # 冻结窗口（数据下载起点）
+    top_n: 50
+    min_history_days: 200                     # 2019 窗口 ~242 交易日
 
 # -- Features --
 features:
@@ -56,7 +56,7 @@ test:
 env:
     horizon: 120
     tiers: [0, 0.3333, 0.6667, 1.0]
-    max_weight: 0.20                      # 20 只池单币上限 20%
+    max_weight: 0.20                      # 9 只历史池单币上限 20%（隐含 ≥5 只分散）
     cost_rate: 0.0005                     # 币安 taker 费率量级
     turnover_penalty: 0.005
     baseline_reward: true
