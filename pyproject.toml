@@ -33,4 +33,4 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["orange_quant*", "biance_lgb_momtopk*", "hyperliquid_lgb_momtopk*"]
+include = ["orange_quant*", "biance_lgb_momtopk*", "hyperliquid_lgb_momtopk*", "csi300_rl_rotation*"]

@@ -14,6 +14,7 @@ orange-quant/
 │                                # unified build entry (--exchange) + venue hooks
 ├── biance_lgb_momtopk/           # Binance adapter (data hooks + BinanceBroker + shims)
 ├── hyperliquid_lgb_momtopk/      # Hyperliquid adapter (data hooks + HyperliquidBroker + shims)
+├── csi300_rl_rotation/           # A-share RL rotation (gym env + tianshou PPO)
 ├── config/                     # Experiment config files
 │   ├── csi300-lgb-momtopk.yaml
 │   └── binance-lgb-momtopk.yaml
@@ -48,7 +49,26 @@ python -c "from biance_lgb_momtopk.workflow.experiment import run_from_yaml; run
 # Binance
 python -m biance_lgb_momtopk.data.build --top 50
 python -c "from biance_lgb_momtopk.workflow.experiment import run_from_yaml; run_from_yaml('config/binance-lgb-momtopk.yaml')"
+
+# A-share RL rotation (csi300 top50, 离散仓位档位 PPO)
+python -m csi300_rl_rotation.data csi300-rl-rotation        # 构建特征 → npz 缓存
+python -m csi300_rl_rotation.train csi300-rl-rotation       # PPO 训练 (~8min CPU)
+python -m csi300_rl_rotation.backtest csi300-rl-rotation    # test 段回测 + nav.png
 ```
+
+## RL rotation strategy (`csi300_rl_rotation`)
+
+基于 tianshou PPO 的日频轮动策略：动作 = 每只股票每日从 4 个仓位档位
+（空仓/轻仓/半仓/满仓）独立选择，档位映射权重后次一交易日开盘执行。
+训练/评估/回测全程无前视（universe 在训练前冻结、z-score 只拟合 train 段、
+obs ≤ 收盘、reward 只用次日数据）。
+
+- 数据：`~/.qlib/qlib_data/cn_data`，csi300 按 2012 年成交量取 top50（冻结），
+  10 个 OHLCV 简因子（$amount 2020-09 前缺失，只用 $volume 代理流动性）
+- 环境：`gym.Env`（obs = 特征 + 当前档位；reward = 组合收益 − 成本 − 换手正则，
+  训练用差分奖励 vs 等权基准）
+- 训练：MultiDiscrete PPO（tianshou 0.4.10），valid 段固定种子评估选 best
+- 回测：test 段确定性 rollout，输出 NAV/持仓/换手 + 指标 json + 三线图
 
 ## Experiment results
 
@@ -56,6 +76,7 @@ python -c "from biance_lgb_momtopk.workflow.experiment import run_from_yaml; run
 |--------|------|-----|-------------|-----------|
 | A-share CSI300 | 820 | 0.027 | 1.0% | 0.11 |
 | Binance top-20 blue chips | 20 | 0.034 | 17.3% | 0.77 |
+| A-share RL rotation (2023–2026 test) | 50 | — | −9.7% vs 等权 | −0.45 |
 
 ## Automated trading
 
