@@ -16,7 +16,7 @@ import argparse
 import json
 import pickle
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
 import numpy as np
 import pandas as pd
@@ -103,7 +103,7 @@ class LGBRotationRunner:
         from orange_quant.trading.execute import rebalance
 
         result = rebalance(target, self.ds.codes, self.broker,
-                           self.cfg["market"]["quote_ccy"], self.min_notional_safety)
+                           self.min_notional_safety)
         result.update({
             "date": today,
             "targets": {k: round(v, 4) for k, v in target.items()},
@@ -121,19 +121,9 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = load_config(args.config)
-    quote = cfg["market"]["quote_ccy"]
-    if args.broker == "paper":
-        from orange_quant.trading.paper_broker import PaperBroker
+    from orange_quant.trading import make_broker
 
-        if "binance" in cfg["market"]["venue"]:
-            from orange_quant.trading.binance_broker import _make_public_exchange as mk
-        else:
-            from orange_quant.trading.hyperliquid_broker import _make_exchange as mk
-        broker = PaperBroker([], quote, mk)
-    else:
-        from orange_quant.trading.binance_broker import BinanceBroker
-        broker = BinanceBroker()
-
+    broker = make_broker(cfg, args.broker)
     runner = LGBRotationRunner(args.config, broker, force=args.force)
     result = runner.run_once()
     print(json.dumps({k: v for k, v in result.items() if k != "orders"},

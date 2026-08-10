@@ -17,7 +17,7 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 log = logging.getLogger("orange-quant")
@@ -44,24 +44,11 @@ def run(config_name: str, once: bool, dry_run: bool, force: bool,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
     log.info(f"server: config={config_name} dry_run={dry_run} once={once}")
 
-    from orange_quant.trading.paper_broker import PaperBroker
     from orange_quant.rl.dataset import load_config
+    from orange_quant.trading import make_broker
 
     cfg = load_config(config_name)
-    quote = cfg["market"]["quote_ccy"]
-
-    if dry_run:
-        if "binance" in cfg["market"]["venue"]:
-            from orange_quant.trading.binance_broker import _make_public_exchange as mk
-        else:
-            from orange_quant.trading.hyperliquid_broker import _make_exchange as mk
-        broker = PaperBroker([], quote, mk)
-    elif "binance" in cfg["market"]["venue"]:
-        from orange_quant.trading.binance_broker import BinanceBroker
-        broker = BinanceBroker()
-    else:
-        from orange_quant.trading.hyperliquid_broker import HyperliquidBroker
-        broker = HyperliquidBroker()
+    broker = make_broker(cfg, "paper" if dry_run else "live")
 
     if cfg.get("strategy", {}).get("type", "rl") == "lgb":
         from orange_quant.lgb.runner import LGBRotationRunner

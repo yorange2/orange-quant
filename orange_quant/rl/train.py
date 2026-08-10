@@ -28,6 +28,7 @@ from orange_quant.rl.dataset import load_config, load_or_build
 from orange_quant.rl.env import RotationEnv
 from orange_quant.rl.network import MultiDiscreteActor, RotationCritic
 from orange_quant.rl.policy import MultiDiscretePPO
+from orange_quant.rl.tracking import log_run
 
 
 def make_envs(ds, segment: str, horizon: int, env_cfg: dict, n: int,
@@ -187,21 +188,14 @@ def main() -> None:
     hidden = tuple(model_cfg["hidden"])
 
     if not args.no_mlflow:
-        try:
-            import os
-            # mlflow 3.x blocks the filesystem backend by default
-            os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
-            import mlflow
-            with mlflow.start_run(run_name=cfg["market"]["venue"] + "-rl-rotation"):
-                mlflow.log_params({**ppo, "device": model_cfg["device"],
-                                   "hidden": list(hidden),
-                                   "universe_top_n": ds.n_stocks})
-                mlflow.log_metric("valid_best_reward", best_reward)
-                mlflow.log_metric("valid_best_epoch", best_epoch)
-                mlflow.log_artifact(str(Path(cfg["paths"]["model_dir"]) / "policy_best.pth"))
-                print(f"[train] mlflow run logged")
-        except Exception as e:  # noqa: BLE001 - tracking is best-effort
-            print(f"[train] mlflow logging skipped: {e}")
+        log_run(
+            cfg["market"]["venue"] + "-rl-rotation",
+            params={**ppo, "device": model_cfg["device"], "hidden": list(hidden),
+                    "universe_top_n": ds.n_stocks},
+            metrics={"valid_best_reward": best_reward,
+                     "valid_best_epoch": best_epoch},
+            artifacts=[Path(cfg["paths"]["model_dir"]) / "policy_best.pth"],
+        )
 
 
 if __name__ == "__main__":

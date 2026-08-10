@@ -12,20 +12,17 @@ Auth: set HYPERLIQUID_ADDRESS (main wallet address) and HYPERLIQUID_PRIVATE_KEY
 """
 
 import os
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import ccxt
-import pandas as pd
 from dotenv import load_dotenv
 
-from orange_quant.trading.broker import Broker
+from orange_quant.trading.broker import CcxtBroker
 
 load_dotenv()
 
 _QUOTE = "USDC"
 _TIMEOUT_MS = 30000
-# Hyperliquid spot minimum order value
-_DEFAULT_MIN_NOTIONAL = 10.0
 
 
 def _make_exchange(**extra) -> ccxt.hyperliquid:
@@ -36,7 +33,7 @@ def _make_exchange(**extra) -> ccxt.hyperliquid:
     })
 
 
-class HyperliquidBroker(Broker):
+class HyperliquidBroker(CcxtBroker):
     """
     Hyperliquid live spot trading wrapper.
 
@@ -55,6 +52,7 @@ class HyperliquidBroker(Broker):
             walletAddress=address,
             privateKey=private_key,
         )
+        self.quote_ccy = _QUOTE
 
         self._verify_connection()
 
@@ -67,9 +65,6 @@ class HyperliquidBroker(Broker):
         except Exception as e:
             print(f"[broker] ❌ Connection failed: {e}")
             raise
-
-    def _symbol(self, coin: str) -> str:
-        return f"{coin}/{_QUOTE}"
 
     def get_balances(self) -> Dict[str, float]:
         """Get spot account balances, returns {coin: total balance} (USDC included)"""
@@ -84,60 +79,12 @@ class HyperliquidBroker(Broker):
         """Get the USDC balance"""
         return self.get_balances().get(_QUOTE, 0.0)
 
-    def get_current_prices(self, coins: List[str]) -> Dict[str, float]:
-        """Get current prices, returns {coin: price}"""
-        symbols = [self._symbol(c) for c in coins]
-        try:
-            tickers = self.exchange.fetch_tickers(symbols)
-        except Exception as e:
-            print(f"[broker] ❌ Failed to get prices: {e}")
-            return {}
-        result = {}
-        for sym, t in tickers.items():
-            price = t.get("last") or t.get("close")
-            if price:
-                result[sym.split("/")[0]] = float(price)
-        return result
-
-    def fetch_ohlcv(self, coin: str, timeframe: str = "1d", limit: int = 365) -> pd.DataFrame:
-        """
-        Fetch OHLCV candle data.
-        Returns pd.DataFrame with columns: datetime, open, high, low, close, volume
-        """
-        duration_ms = self.exchange.parse_timeframe(timeframe) * 1000
-        since = self.exchange.milliseconds() - limit * duration_ms
-        ohlcv = self.exchange.fetch_ohlcv(self._symbol(coin), timeframe, since=since, limit=limit)
-        df = pd.DataFrame(
-            ohlcv, columns=["datetime", "open", "high", "low", "close", "volume"]
-        )
-        df["datetime"] = pd.to_datetime(df["datetime"], unit="ms")
-        df.set_index("datetime", inplace=True)
-        return df
-
-    def get_quote_volumes(self, coins: List[str]) -> Dict[str, float]:
-        """Get 24h quote volume (USDC) per coin, returns {coin: volume}"""
-        symbols = [self._symbol(c) for c in coins]
-        tickers = self.exchange.fetch_tickers(symbols)
-        result = {}
-        for sym, t in tickers.items():
-            result[sym.split("/")[0]] = float(t.get("quoteVolume") or 0)
-        return result
-
-    def get_min_notional(self, coin: str) -> float:
-        """Get the minimum order value (USDC) for a coin's spot pair"""
-        try:
-            market = self.exchange.market(self._symbol(coin))
-            min_cost = market.get("limits", {}).get("cost", {}).get("min")
-            return float(min_cost) if min_cost else _DEFAULT_MIN_NOTIONAL
-        except Exception:
-            return _DEFAULT_MIN_NOTIONAL
-
-    def market_buy(self, coin: str, amount_usdc: float) -> Optional[dict]:
+    def market_buy(self, coin: str, amount_usdc: float,
+                   price: Optional[float] = None) -> Optional[dict]:
         """Market buy (amount specified in USDC notional)"""
         symbol = self._symbol(coin)
         try:
-            ticker = self.exchange.fetch_ticker(symbol)
-            price = ticker.get("last") or ticker.get("close")
+            price = self._reference_price(symbol, price)
             if not price:
                 raise ValueError("no price available")
             amount = float(self.exchange.amount_to_precision(symbol, amount_usdc / price))
@@ -149,12 +96,12 @@ class HyperliquidBroker(Broker):
             print(f"[broker] ❌ Failed to buy {coin}: {e}")
             return None
 
-    def market_sell(self, coin: str, amount: float) -> Optional[dict]:
+    def market_sell(self, coin: str, amount: float,
+                    price: Optional[float] = None) -> Optional[dict]:
         """Market sell (amount specified in base units)"""
         symbol = self._symbol(coin)
         try:
-            ticker = self.exchange.fetch_ticker(symbol)
-            price = ticker.get("last") or ticker.get("close")
+            price = self._reference_price(symbol, price)
             if not price:
                 raise ValueError("no price available")
             amount = float(self.exchange.amount_to_precision(symbol, amount))
@@ -164,16 +111,3 @@ class HyperliquidBroker(Broker):
         except Exception as e:
             print(f"[broker] ❌ Failed to sell {coin}: {e}")
             return None
-
-    def get_open_orders(self, coin: Optional[str] = None) -> list:
-        """Get open (unfilled) orders"""
-        symbol = self._symbol(coin) if coin else None
-        return self.exchange.fetch_open_orders(symbol)
-
-    def cancel_all_orders(self, coin: Optional[str] = None):
-        """Cancel all open orders"""
-        orders = self.get_open_orders(coin)
-        for o in orders:
-            self.exchange.cancel_order(o["id"], o["symbol"])
-        print(f"[broker] Cancelled {len(orders)} open orders")
-

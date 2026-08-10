@@ -27,7 +27,7 @@ from tianshou.data import Batch
 
 from orange_quant.rl.dataset import load_config, load_or_build
 from orange_quant.rl.env import RotationEnv
-from orange_quant.rl.metrics import return_metrics
+from orange_quant.rl.metrics import bars_per_year, return_metrics
 from orange_quant.rl.network import MultiDiscreteActor, RotationCritic
 from orange_quant.rl.policy import MultiDiscretePPO
 
@@ -60,17 +60,77 @@ def load_policy(cfg: dict, ds, device, ckpt: str | None = None):
     return policy.eval()
 
 
-def load_benchmark(ds, cfg) -> np.ndarray:
-    """Benchmark index NAV from the local raw CSV, aligned to the test calendar."""
+def benchmark_closes(cfg: dict, dates) -> pd.Series:
+    """Benchmark symbol's close series from the local raw CSV, on ``dates``."""
     sym = cfg["market"]["benchmark_symbol"]
     raw = Path(cfg["data"]["raw_dir"]) / f"{sym}.csv"
     idx = pd.read_csv(raw, parse_dates=["date"]).set_index("date").sort_index()
+    return idx["close"].reindex(pd.DatetimeIndex(dates))
+
+
+def load_benchmark(ds, cfg) -> np.ndarray:
+    """Benchmark index NAV from the local raw CSV, aligned to the test calendar."""
     test_s, test_e = ds.split_idx["test"]
-    dates = pd.DatetimeIndex(ds.dates[test_s : test_e + 1])
-    c = idx["close"].reindex(dates)
+    c = benchmark_closes(cfg, ds.dates[test_s : test_e + 1])
     rets = c.pct_change(fill_method=None).fillna(0.0).to_numpy()
-    nav = np.cumprod(1.0 + rets)
-    return nav
+    return np.cumprod(1.0 + rets)
+
+
+def rollout(policy, env) -> pd.DataFrame:
+    """Deterministic rollout of ``policy`` over ``env`` → one row per step.
+
+    Shared by the single-shot backtest and the walk-forward windows so the NAV
+    row schema and the |Δw|/2 turnover definition stay identical.
+    """
+    policy.eval()
+    rows = []
+    nav = 1.0
+    w_prev = None
+    obs, _ = env.reset()
+    done = False
+    while not done:
+        with torch.no_grad():
+            act = policy(Batch(obs=obs[None])).act[0]
+        obs, rew, term, trunc, info = env.step(act)
+        w = info["weights"]
+        nav *= 1.0 + rew
+        rows.append({
+            "date": info["date"], "nav": nav, "ret": rew,
+            "turnover": float(np.abs(w - (w_prev if w_prev is not None else 0)).sum()) / 2,
+            "n_held": int((w > 0).sum()),
+            "max_w": float(w.max()) if w.sum() > 0 else 0.0,
+            "in_cash": float(w.sum() == 0.0),
+        })
+        w_prev = w
+        done = term or trunc
+    return pd.DataFrame(rows)
+
+
+def plot_navs(navs: dict, dates, title: str, out_path) -> None:
+    """3-line normalized NAV chart (shared by the RL and LGB backtests)."""
+    plt.rcParams["font.sans-serif"] = ["PingFang SC", "Heiti SC", "Arial Unicode MS"]
+    plt.rcParams["axes.unicode_minus"] = False
+    fig, ax = plt.subplots(figsize=(10, 5))
+    for name, nv in navs.items():
+        ax.plot(dates[: len(nv)], nv / nv[0], label=name, linewidth=1.5)
+    ax.set_title(title)
+    ax.set_ylabel("NAV (normalized)")
+    ax.legend()
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+
+
+def write_metrics(metrics: dict, out_dir: Path, header: str,
+                  signed_prefixes: tuple = ("annual", "excess", "information")) -> None:
+    """Persist metrics.json and print the formatted table."""
+    with open(out_dir / "metrics.json", "w") as f:
+        json.dump(metrics, f, indent=2, ensure_ascii=False)
+    print(f"\n========== {header} ==========")
+    for k, v in metrics.items():
+        if isinstance(v, float):
+            print(f"  {k:<28} {v:+.4f}" if k.startswith(signed_prefixes)
+                  else f"  {k:<28} {v:.4f}")
 
 
 def main() -> None:
@@ -103,27 +163,7 @@ def main() -> None:
                       turnover_penalty=0.0,  # no training-style penalty at test
                       decision_every=env_cfg.get("decision_every", 1),
                       start_idx=test_s, seed=0)
-    w_prev = None
-    rows = []
-    nav = 1.0
-    obs, _ = env.reset()
-    done = False
-    while not done:
-        with torch.no_grad():
-            act = policy(Batch(obs=obs[None])).act[0]
-        obs, rew, term, trunc, info = env.step(act)
-        w = info["weights"]
-        turnover = float(np.abs(w - (w_prev if w_prev is not None else 0)).sum()) / 2
-        nav *= 1.0 + rew
-        rows.append({
-            "date": info["date"], "nav": nav, "ret": rew,
-            "turnover": turnover, "n_held": int((w > 0).sum()),
-            "max_w": float(w.max()) if w.sum() > 0 else 0.0,
-            "in_cash": float(w.sum() == 0.0),
-        })
-        w_prev = w
-        done = term or trunc
-    rl = pd.DataFrame(rows)
+    rl = rollout(policy, env)
     rl.to_csv(out_dir / "nav.csv", index=False)
     print(f"[backtest] RL policy: {len(rl)} days, final NAV {rl['nav'].iloc[-1]:.4f}")
 
@@ -142,46 +182,23 @@ def main() -> None:
         "等权 top50": ew_nav[:t],
         "SH000300": bench_nav[:t],
     }
-    # bars-per-year from the *policy-step* spacing in the rollout rows
-    # (daily decisions 252; sub-daily e.g. raw-hourly 6048)
-    if len(rl) > 1:
-        step_dates = pd.to_datetime(rl["date"]).to_numpy().astype("datetime64[D]").astype(float)
-        gap_days = np.median(np.diff(step_dates))
-        bars_per_year = 252.0 if gap_days >= 1.0 else 252.0 * 24
-    else:
-        bars_per_year = 252.0
+    bpy = bars_per_year(cfg)
     metrics = return_metrics(
         rl["nav"].to_numpy()[:t],
         benchmark_nav=ew_nav[:t],
         turnover=rl["turnover"].to_numpy()[:t],
-        bars_per_year=bars_per_year,
-        annualize=bars_per_year,
+        bars_per_year=bpy,
+        annualize=bpy,
     )
     metrics["benchmark_equal_weight_nav"] = float(ew_nav[-1])
     metrics["benchmark_csi300_nav"] = float(bench_nav[-1])
     metrics["policy_nav"] = float(rl["nav"].iloc[-1])
-    with open(out_dir / "metrics.json", "w") as f:
-        json.dump(metrics, f, indent=2, ensure_ascii=False)
+    write_metrics(metrics, out_dir, "回测指标 (vs 等权 top50)")
 
-    print("\n========== 回测指标 (vs 等权 top50) ==========")
-    for k, v in metrics.items():
-        if isinstance(v, float):
-            print(f"  {k:<28} {v:+.4f}" if k.startswith(("annual", "excess", "information"))
-                  else f"  {k:<28} {v:.4f}")
-
-    # ---- plot ----
-    plt.rcParams["font.sans-serif"] = ["PingFang SC", "Heiti SC", "Arial Unicode MS"]
-    plt.rcParams["axes.unicode_minus"] = False
-    fig, ax = plt.subplots(figsize=(10, 5))
-    for name, nv in navs.items():
-        ax.plot(dates[: len(nv)], nv / nv[0], label=name, linewidth=1.5)
-    ax.set_title(f"csi300 RL rotation backtest ({dates[0].astype('datetime64[D]')} ~ "
-                 f"{dates[len(rl) - 1].astype('datetime64[D]')})")
-    ax.set_ylabel("NAV (normalized)")
-    ax.legend()
-    ax.grid(alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(out_dir / "nav.png", dpi=150)
+    plot_navs(navs, dates,
+              f"csi300 RL rotation backtest ({dates[0].astype('datetime64[D]')} ~ "
+              f"{dates[len(rl) - 1].astype('datetime64[D]')})",
+              out_dir / "nav.png")
     print(f"\n[backtest] outputs → {out_dir}/")
     print("[backtest] done")
 

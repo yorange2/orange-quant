@@ -44,7 +44,7 @@ def _ms_to_date(ms: int) -> str:
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
-def candles_to_csv(candles: list, coin: str, freq: str = "1d") -> str:
+def candles_to_csv(candles: list, freq: str = "1d") -> str:
     """Uniform OHLCV rows [ts, o, h, l, c, v] -> CSV (date,open,close,high,low,volume).
 
     Hourly bars must keep the hour in the timestamp — a date-only format would
@@ -56,62 +56,12 @@ def candles_to_csv(candles: list, coin: str, freq: str = "1d") -> str:
     return "\n".join(lines)
 
 
-def load_coins(source: DataSource) -> list:
-    """Active coin list: raw CSVs first, then live top-volume pairs,
-    then the static fallback."""
-    if source.raw_dir.exists():
-        coins = sorted(f.stem for f in source.raw_dir.glob("*.csv"))
-        if coins:
-            return coins
-    try:
-        return [coin for _, coin in source.get_top_symbols(20)]
-    except Exception as e:
-        print(f"[data] ⚠ Failed to fetch top pairs ({e}), using static fallback")
-        return list(source.fallback_coins)
-
-
-def _stable_liquid_coins(source: DataSource, min_avg_quote_vol: float,
-                         min_history_days: int, lookback: int = 30) -> set:
-    """Coins with enough history AND enough *sustained* liquidity, computed from
-    the already-downloaded CSVs (no extra API calls).
-
-    Uses the trailing ``lookback``-day average quote volume (volume * close)
-    instead of a live 24h snapshot, so freshly-listed meme coins whose live
-    volume spikes into the ranking for a day — but whose sustained liquidity is
-    negligible — are excluded. ``min_history_days`` additionally drops coins too
-    new to have reliable features.
-    """
-    keep = set()
-    for f in source.raw_dir.glob("*.csv"):
-        try:
-            df = pd.read_csv(f)
-        except Exception:
-            continue
-        if len(df) < min_history_days or "volume" not in df or "close" not in df:
-            continue
-        recent = df.tail(lookback)
-        avg_qv = float((recent["volume"] * recent["close"]).mean())
-        if avg_qv >= min_avg_quote_vol:
-            keep.add(f.stem)
-    return keep
-
-
 def rebuild_data(source: DataSource, top: int = 50, start: str = "2020-01-01",
-                 force_download: bool = False, restrict_to_top: bool = False,
-                 min_history_days: int = 0, min_avg_quote_vol: float = 0.0,
-                 freq: str = "1d"):
+                 force_download: bool = False, freq: str = "1d"):
     """Incrementally download bars into raw CSVs.
 
     ``freq``: "1d" (daily, into ``raw_dir``) or "1h" (hourly, into
     ``h1_raw_dir``, via the venue's ``fetch_hourly`` hook).
-
-    ``restrict_to_top``: when True, the rebuilt universe is limited to coins
-    with ``>= min_history_days`` of history AND a trailing-30-day average quote
-    volume ``>= min_avg_quote_vol`` (computed from the CSVs). This uses
-    *sustained* liquidity, not a live 24h snapshot, so a meme coin whose volume
-    spikes for a single day cannot enter the tradable universe. Coins that fell
-    off keep their CSVs on disk but are excluded from the universe.
-    When False (default), all downloaded CSVs are included.
     """
     hourly = freq == "1h"
     fetch = source.fetch_hourly if hourly else source.fetch_daily
@@ -151,7 +101,7 @@ def rebuild_data(source: DataSource, top: int = 50, start: str = "2020-01-01",
                 total += len(existing)
                 continue
 
-            new_csv = candles_to_csv(candles, coin, freq)
+            new_csv = candles_to_csv(candles, freq)
             new_df = pd.read_csv(pd.io.common.StringIO(new_csv))
             combined = pd.concat([existing, new_df]).drop_duplicates(
                 subset="date", keep="last"
@@ -172,7 +122,7 @@ def rebuild_data(source: DataSource, top: int = 50, start: str = "2020-01-01",
                 print("⚠ no data")
                 continue
 
-            csv_file.write_text(candles_to_csv(candles, coin, freq))
+            csv_file.write_text(candles_to_csv(candles, freq))
             print(f"✅ {len(candles)} days")
             total += len(candles)
             new_total += len(candles)
@@ -184,8 +134,8 @@ def rebuild_data(source: DataSource, top: int = 50, start: str = "2020-01-01",
     dates = []
     for coin in coins:
         try:
-            df = pd.read_csv(raw_dir / f"{coin}.csv")
-            dates.append((df["date"].min(), df["date"].max()))
+            d = pd.read_csv(raw_dir / f"{coin}.csv", usecols=["date"])["date"]
+            dates.append((d.min(), d.max()))
         except Exception:
             continue
     if not coins:

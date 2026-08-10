@@ -27,29 +27,23 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
-import yaml
 
-from orange_quant.rl.dataset import load_config, load_or_build, RotationDataset
+from orange_quant.rl.dataset import (
+    first_at_or_after, last_at_or_before, load_config, load_or_build,
+)
 from orange_quant.rl.train import train_policy
-
-
-def _idx(ds: RotationDataset, day, side: str) -> int:
-    ts = pd.Timestamp(day)
-    if side == "start":
-        return int(ds.dates.searchsorted(ts.to_datetime64()))
-    return int(ds.dates.searchsorted(ts.to_datetime64(), side="right")) - 1
 
 
 def refresh_data(cfg: dict) -> None:
     """Incremental bar refresh (CSV resumable) for the venue's raw store."""
     venue = cfg["market"]["venue"]
+    freq = cfg["data"].get("freq", "1d")
     if venue == "tencent":
         # A-share: extend every existing CSV from its last date (incremental)
         from orange_quant.data.tencent import fetch_symbol
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        from pathlib import Path as _P
 
-        raw = _P(cfg["data"]["raw_dir"])
+        raw = Path(cfg["data"]["raw_dir"])
         raw.mkdir(parents=True, exist_ok=True)
         symbols = sorted(f.stem for f in raw.glob("*.csv"))
         end = cfg["data"]["end_time"]
@@ -69,17 +63,15 @@ def refresh_data(cfg: dict) -> None:
             print(f"[retrain] tencent refresh failures: {list(fail)[:5]}")
         print(f"[retrain] tencent refresh done: ok={ok}")
         return
-    from orange_quant.data.sources import BinanceSource, HyperliquidSource
-
-    source = BinanceSource() if venue == "binance" else HyperliquidSource()
     from orange_quant.data import pipeline
+    from orange_quant.data.build import get_source
 
-    pipeline.rebuild_data(source.build_source(), top=cfg["universe"]["top_n"],
-                          start=cfg["data"]["start_time"],
-                          freq="1h" if cfg["data"].get("freq") == "1h" else "1d")
-    # for hourly configs also refresh the daily store the npz is built from
-    if cfg["data"].get("freq") == "1h" and venue == "binance":
-        pipeline.rebuild_data(source.build_source(), top=cfg["universe"]["top_n"],
+    source = get_source(venue).build_source()
+    pipeline.rebuild_data(source, top=cfg["universe"]["top_n"],
+                          start=cfg["data"]["start_time"], freq=freq)
+    if freq == "1h":
+        # hourly configs also need the daily store the npz is built from
+        pipeline.rebuild_data(source, top=cfg["universe"]["top_n"],
                               start=cfg["data"]["start_time"], freq="1d")
 
 
@@ -105,8 +97,8 @@ def main() -> None:
     tr_end = today - timedelta(days=1)
     tr_start = tr_end - pd.DateOffset(years=args.train_years) + timedelta(days=1)
     va_start = tr_end - pd.DateOffset(months=args.valid_months) + timedelta(days=1)
-    a, b = _idx(ds, tr_start, "start"), _idx(ds, tr_end, "end")
-    va, vb = _idx(ds, va_start, "start"), _idx(ds, tr_end, "end")
+    a, b = first_at_or_after(ds.dates, tr_start), last_at_or_before(ds.dates, tr_end)
+    va, vb = first_at_or_after(ds.dates, va_start), b
     if b <= a or vb <= va:
         raise SystemExit(f"[retrain] insufficient data for window "
                          f"{tr_start.date()}~{tr_end.date()}")
@@ -115,7 +107,7 @@ def main() -> None:
     need = cfg["env"]["horizon"] * cfg["env"].get("decision_every", 1)
     while vb - va < need and va_start > tr_start:
         va_start -= pd.DateOffset(months=1)
-        va = _idx(ds, va_start, "start")
+        va = first_at_or_after(ds.dates, va_start)
     ds_w = replace(ds, split_idx={"train": (a, b), "valid": (va, vb),
                                   "test": (vb, b)})
     print(f"[retrain] {args.config}: train {ds.dates[a].astype('datetime64[D]')}"

@@ -23,6 +23,8 @@ import lightgbm as lgb
 from orange_quant.lgb.dataset import LGBDataset, load_or_build, load_config
 from orange_quant.lgb.ensemble import EnsembleLGB
 from orange_quant.lgb.features import FEATURE_COLS
+from orange_quant.rl.metrics import per_date_corr
+from orange_quant.rl.tracking import log_run
 
 
 def _segment_rows(ds: LGBDataset, segment: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -37,23 +39,6 @@ def _segment_rows(ds: LGBDataset, segment: str) -> Tuple[np.ndarray, np.ndarray,
     date_idx = (rows[:, 0] + s).astype(np.int64)
     code_idx = rows[:, 1].astype(np.int64)
     return X, y, date_idx, code_idx
-
-
-def _per_date_corr(pred: np.ndarray, y: np.ndarray, date_idx: np.ndarray,
-                   n_dates: int, method: str) -> np.ndarray:
-    """Mean/std of per-date correlation (pearson/spearman) between pred and y."""
-    from scipy.stats import pearsonr, spearmanr
-
-    fn = pearsonr if method == "pearson" else spearmanr
-    vals = []
-    for t in np.unique(date_idx):
-        m = date_idx == t
-        if m.sum() < 2:
-            continue
-        r = fn(pred[m], y[m])
-        if not np.isnan(r.statistic):
-            vals.append(r.statistic)
-    return np.asarray(vals, dtype=np.float64)
 
 
 def train_model(config: dict, ds: LGBDataset, num_boost_round: int | None = None,
@@ -108,9 +93,8 @@ def train_model(config: dict, ds: LGBDataset, num_boost_round: int | None = None
 
     # valid IC / Rank IC: per-date correlation vs the label, mean over dates
     pred_va = model.predict(X_va)
-    va_days = ds.split_idx["valid"][1] - ds.split_idx["valid"][0] + 1
-    ic = _per_date_corr(pred_va, y_va, va_date, va_days, "pearson")
-    ric = _per_date_corr(pred_va, y_va, va_date, va_days, "spearman")
+    ic = per_date_corr(pred_va, y_va, va_date, "pearson")
+    ric = per_date_corr(pred_va, y_va, va_date, "spearman")
     metrics = {
         "valid_rmse": float(np.mean(valid_rmses)),
         "valid_rmse_per_seed": valid_rmses,
@@ -162,25 +146,16 @@ def main() -> None:
     save_model(cfg, model, metrics, codes=ds.codes)
 
     if not args.no_mlflow:
-        try:
-            os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
-            import mlflow
-
-            venue = cfg["market"]["venue"]
-            with mlflow.start_run(run_name=f"{venue}-lgb-momtopk"):
-                mlflow.log_params({
-                    **cfg["lgb"], "n_seeds": metrics["n_seeds"],
+        log_run(
+            f"{cfg['market']['venue']}-lgb-momtopk",
+            params={**cfg["lgb"], "n_seeds": metrics["n_seeds"],
                     "universe_top_n": cfg["universe"]["top_n"],
-                    "n_features": ds.n_feats,
-                })
-                mlflow.log_metrics({
-                    "valid_rmse": metrics["valid_rmse"],
-                    "valid_ic": metrics["valid_ic"],
-                    "valid_rank_ic": metrics["valid_rank_ic"],
-                })
-                mlflow.log_artifact(str(Path(cfg["paths"]["model_dir"]) / "model.pkl"))
-        except Exception as e:  # noqa: BLE001 - logging must never block training
-            print(f"[lgb-train] mlflow skipped: {e}")
+                    "n_features": ds.n_feats},
+            metrics={k: metrics[k] for k in
+                     ("valid_rmse", "valid_ic", "valid_rank_ic")},
+            artifacts=[Path(cfg["paths"]["model_dir"]) / "model.pkl"],
+            tag="lgb-train",
+        )
 
 
 if __name__ == "__main__":

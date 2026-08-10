@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -58,6 +58,26 @@ def load_config(config_name: str) -> dict:
         return yaml.safe_load(f)
 
 
+def _as_index(calendar) -> pd.DatetimeIndex:
+    """Accept a DatetimeIndex or a datetime64 array (``RotationDataset.dates``)."""
+    return calendar if isinstance(calendar, pd.DatetimeIndex) else pd.DatetimeIndex(calendar)
+
+
+def first_at_or_after(calendar, day) -> int:
+    """Index of the first calendar entry >= ``day`` (shared by every segmenter)."""
+    return int(_as_index(calendar).searchsorted(pd.Timestamp(day)))
+
+
+def last_at_or_before(calendar, day) -> int:
+    """Index of the last calendar entry <= ``day``."""
+    return int(_as_index(calendar).searchsorted(pd.Timestamp(day), side="right")) - 1
+
+
+def segment_idx(calendar, start, end) -> Tuple[int, int]:
+    """(first index >= start, last index <= end) for one train/valid/test span."""
+    return first_at_or_after(calendar, start), last_at_or_before(calendar, end)
+
+
 def bar_reader(config: dict) -> Callable[[str], Optional[pd.DataFrame]]:
     """Return a per-symbol CSV reader normalized to [date,open,high,low,close,volume].
 
@@ -78,18 +98,42 @@ def bar_reader(config: dict) -> Callable[[str], Optional[pd.DataFrame]]:
             return None
         if df.empty:
             return None
-        cols = {c: c for c in df.columns}
-        # unify column names: crypto uses open,close,high,low (pipeline order)
-        if "open" not in df and "close" in df and "high" in df and "low" in df:
-            pass
-        if "close" in df and "high" in df and "low" in df and "volume" in df:
-            keep = ["open", "high", "low", "close", "volume"]
-            if "open" not in df:  # crypto CSV has open but let's be safe
-                pass
-            return df[[c for c in keep if c in df.columns]]
-        return None
+        # both layouts carry the same columns in a different order; select the
+        # canonical subset (a file missing any of them is treated as unusable)
+        keep = ["open", "high", "low", "close", "volume"]
+        if not {"close", "high", "low", "volume"}.issubset(df.columns):
+            return None
+        return df[[c for c in keep if c in df.columns]]
 
     return _read
+
+
+def load_bars_and_calendar(config: dict, log_prefix: str):
+    """Frozen universe + per-symbol bars + the shared warmup→end calendar.
+
+    The common front half of both dataset builds (``rl`` and ``lgb``); only the
+    per-symbol feature/label computation downstream differs.
+    Returns ``(codes, {code: bars}, calendar)``.
+    """
+    from orange_quant.data.universe import freeze_universe as freeze
+
+    uni = config["universe"]
+    codes = freeze(uni["raw_dir"], uni["top_n"], uni["freeze_date"],
+                   uni["liquidity_start"],
+                   membership=uni.get("membership"),
+                   min_history_days=uni.get("min_history_days", 250))
+    print(f"[{log_prefix}] frozen universe: {len(codes)} names, "
+          f"freeze_date={uni['freeze_date']}")
+
+    read = bar_reader(config)
+    w0 = pd.Timestamp(config["features"]["warmup_start"])
+    w1 = pd.Timestamp(config["data"]["end_time"])
+    bars = {c: b for c, b in ((code, read(code)) for code in codes) if b is not None}
+    cal = pd.DatetimeIndex(sorted({
+        d for b in bars.values() for d in b.index if w0 <= d <= w1
+    }))
+    print(f"[{log_prefix}] calendar {cal[0].date()} ~ {cal[-1].date()} ({len(cal)} days)")
+    return codes, bars, cal
 
 
 def _per_stock_features(ohlcv: pd.DataFrame) -> pd.DataFrame:
@@ -116,30 +160,11 @@ def _per_stock_features(ohlcv: pd.DataFrame) -> pd.DataFrame:
 def build_dataset(config: dict) -> RotationDataset:
     """Load raw CSV bars, compute features/returns, z-score, split, and cache."""
 
-    data_end = config["data"]["end_time"]
     train_s, train_e = config["train"]["start"], config["train"]["end"]
     valid_s, valid_e = config["valid"]["start"], config["valid"]["end"]
     test_s, test_e = config["test"]["start"], config["test"]["end"]
-    uni = config["universe"]
-    warmup_start = config["features"]["warmup_start"]
 
-    from orange_quant.data.universe import freeze_universe as freeze
-
-    codes = freeze(uni["raw_dir"], uni["top_n"], uni["freeze_date"],
-                   uni["liquidity_start"],
-                   membership=uni.get("membership"),
-                   min_history_days=uni.get("min_history_days", 250))
-    print(f"[data] frozen universe: {len(codes)} names, "
-          f"freeze_date={uni['freeze_date']}")
-
-    read = bar_reader(config)
-    w0, w1 = pd.Timestamp(warmup_start), pd.Timestamp(data_end)
-    bars = {code: read(code) for code in codes}
-    bars = {c: b for c, b in bars.items() if b is not None}
-    cal = pd.DatetimeIndex(sorted({
-        d for b in bars.values() for d in b.index if w0 <= d <= w1
-    }))
-    print(f"[data] calendar {cal[0].date()} ~ {cal[-1].date()} ({len(cal)} days)")
+    codes, bars, cal = load_bars_and_calendar(config, "data")
 
     feats = np.full((len(cal), len(codes), len(_FEATURE_COLS)), np.nan, np.float32)
     r_gap = np.zeros((len(cal), len(codes)), np.float32)
@@ -161,18 +186,11 @@ def build_dataset(config: dict) -> RotationDataset:
         r_gap[:, j] = gap.fillna(0.0).to_numpy()
         r_intra[:, j] = intra.fillna(0.0).to_numpy()
 
-    def first_at_or_after(day: str) -> int:
-        return int(cal.searchsorted(pd.Timestamp(day)))
-
-    def last_at_or_before(day: str) -> int:
-        return int(cal.searchsorted(pd.Timestamp(day), side="right")) - 1
-
     # z-score fit on the train segment only (per stock, per feature); the
     # parameters are cached for live inference (orange_quant.live). A symbol
     # with no history in the train segment (late listing) gets NaN stats here —
     # neutralize so the cached params never poison live normalization.
-    t0 = first_at_or_after(train_s)
-    t1 = last_at_or_before(train_e)
+    t0, t1 = segment_idx(cal, train_s, train_e)
     tr = feats[t0 : t1 + 1]
     zmean = np.nan_to_num(np.nanmean(tr, axis=0), nan=0.0)   # (N, F)
     zstd = np.nan_to_num(np.nanstd(tr, axis=0), nan=1.0)     # (N, F)
@@ -181,11 +199,10 @@ def build_dataset(config: dict) -> RotationDataset:
     feats = np.nan_to_num(feats, nan=0.0).astype(np.float32)
 
     split_idx = {
-        "train": (first_at_or_after(train_s), last_at_or_before(train_e)),
-        "valid": (first_at_or_after(valid_s), last_at_or_before(valid_e)),
-        "test": (first_at_or_after(test_s), last_at_or_before(test_e)),
+        "train": (t0, t1),
+        "valid": segment_idx(cal, valid_s, valid_e),
+        "test": segment_idx(cal, test_s, test_e),
     }
-    print(f"[data] calendar {cal[0].date()} ~ {cal[-1].date()} ({len(cal)} days)")
     for name, (a, b) in split_idx.items():
         print(f"[data] {name}: {cal[a].date()} ~ {cal[b].date()} "
               f"({b - a + 1} days)")

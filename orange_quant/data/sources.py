@@ -18,10 +18,6 @@ from orange_quant.data import pipeline
 _REQUEST_DELAY = 0.3
 
 
-class FetchIncomplete(RuntimeError):
-    """A paginated fetch gave up partway, so the rows collected are truncated."""
-
-
 class DataSourceHooks:
     """Venue-specific hooks consumed by the shared build pipeline."""
 
@@ -36,11 +32,6 @@ class DataSourceHooks:
     def fetch_daily(self, symbol: str, start_ms: int, end_ms: int) -> list:
         """Fetch daily bars as uniform rows (closed bars only)."""
         raise NotImplementedError
-
-    def resolve_symbols(self, coins) -> dict:
-        """coin -> venue symbol (e.g. BTC -> BTC/USDT), from the live pair list."""
-        wanted = set(coins)
-        return {coin: sym for sym, coin in self.get_top_symbols(500) if coin in wanted}
 
     # -- pipeline wiring -----------------------------------------------------
 
@@ -62,7 +53,6 @@ class BinanceSource(DataSourceHooks):
     label = "Binance"
     raw_dir = Path("data/binance_raw")
     h1_raw_dir = Path("data/binance_h1_raw")
-    qlib_dir = Path("data/qlib_data/binance")
 
     _BINANCE_API = "https://api.binance.com/api/v3"
     _SKIP = {
@@ -95,8 +85,7 @@ class BinanceSource(DataSourceHooks):
         return result
 
     def _fetch_klines(self, symbol: str, interval: str, step_ms: int,
-                      start_ms: int, end_ms: int,
-                      retries: int = 3, strict: bool = False) -> list:
+                      start_ms: int, end_ms: int, retries: int = 3) -> list:
         """Fetch klines from the Binance API (auto-paginated, retried)."""
         all_candles = []
         batch_start = start_ms
@@ -112,11 +101,8 @@ class BinanceSource(DataSourceHooks):
                     break
                 except Exception as e:
                     if attempt == retries - 1:
-                        msg = (f"{symbol} {interval} page at {batch_start} failed after "
-                               f"{retries} attempts: {e}")
-                        if strict:
-                            raise FetchIncomplete(msg) from e
-                        print(f"  API err: {msg}")
+                        print(f"  API err: {symbol} {interval} page at {batch_start} "
+                              f"failed after {retries} attempts: {e}")
                     else:
                         time.sleep(_REQUEST_DELAY * (attempt + 1) * 5)
             if data is None:
@@ -147,7 +133,6 @@ class HyperliquidSource(DataSourceHooks):
     label = "Hyperliquid"
     raw_dir = Path("data/hyperliquid_raw")
     h1_raw_dir = Path("data/hyperliquid_h1_raw")
-    qlib_dir = Path("data/qlib_data/hyperliquid")
 
     _SKIP_BASES = {"USDT", "USDE", "USDH", "USDHL", "FEUSD", "USR", "DAI", "BUIDL", "USDXL"}
     fallback_coins = ["HYPE", "PURR", "BTC", "ETH", "SOL"]
@@ -157,9 +142,6 @@ class HyperliquidSource(DataSourceHooks):
     _MIN_QUOTE_VOLUME = float(os.environ.get("HL_MIN_QUOTE_VOLUME", "25000"))
     # Safety floor so a market-wide volume dip can never collapse the universe.
     _MIN_UNIVERSE = int(os.environ.get("HL_MIN_UNIVERSE", "15"))
-    # Sustained-liquidity filter applied at rebuild time from downloaded CSVs.
-    _MIN_HISTORY_DAYS = int(os.environ.get("HL_MIN_HISTORY_DAYS", "90"))
-    _MIN_AVG_QUOTE_VOL = float(os.environ.get("HL_MIN_AVG_QUOTE_VOL", "50000"))
 
     def __init__(self):
         self._exchange = None
@@ -219,23 +201,3 @@ class HyperliquidSource(DataSourceHooks):
         # datasets built from this cover a recent window only; use Binance for
         # the phase study. Kept for recent-window sanity checks on HL.
         return self._fetch_ohlcv(symbol, "1h", 3600000, start_ms, end_ms)
-
-    def build_source(self) -> pipeline.DataSource:
-        return pipeline.DataSource(
-            label=self.label,
-            raw_dir=self.raw_dir,
-            qlib_dir=self.qlib_dir,
-            get_top_symbols=self.get_top_symbols,
-            fetch_daily=self.fetch_daily,
-            fetch_hourly=getattr(self, "fetch_hourly", None),
-            fallback_coins=self.fallback_coins,
-        )
-
-    def rebuild_data(self, top: int = 50, start: str = "2020-01-01",
-                     force_download: bool = False):
-        """restrict_to_top keeps only coins currently above the liquidity floor,
-        so zombie pairs that fell off the ranking are dropped from the universe."""
-        return pipeline.rebuild_data(self.build_source(), top=top, start=start,
-                                     force_download=force_download, restrict_to_top=True,
-                                     min_history_days=self._MIN_HISTORY_DAYS,
-                                     min_avg_quote_vol=self._MIN_AVG_QUOTE_VOL)

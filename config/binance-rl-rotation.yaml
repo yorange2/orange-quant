@@ -88,6 +88,10 @@ ppo:
     test_episodes: 20
     seed: 42
 
+# -- Backtest --
+backtest:
+    bars_per_year: 252                 # policy-step bars per year (annualization)
+
 # -- Paths --
 paths:
     model_dir: "models/binance-rl-rotation"

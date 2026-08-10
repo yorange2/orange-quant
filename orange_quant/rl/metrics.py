@@ -6,6 +6,40 @@ from typing import Dict, Optional
 
 import numpy as np
 
+_DEFAULT_BARS_PER_YEAR = 252.0
+
+
+def bars_per_year(cfg: dict) -> float:
+    """Annualization factor for one config, declared in ``backtest.bars_per_year``.
+
+    Sourced from config rather than per-module constants or a runtime guess at
+    the row spacing, so every strategy's Sharpe/IR on the same market is
+    comparable.
+    """
+    return float((cfg.get("backtest") or {}).get(
+        "bars_per_year", _DEFAULT_BARS_PER_YEAR))
+
+
+def per_date_corr(pred: np.ndarray, y: np.ndarray, date_idx: np.ndarray,
+                  method: str = "pearson") -> np.ndarray:
+    """Per-date correlation (pearson/spearman) of pred vs y; NaN stats dropped.
+
+    ``date_idx`` labels each row with its date; dates with < 2 valid rows are
+    skipped. Shared so valid-time and test-time IC use one definition.
+    """
+    from scipy.stats import pearsonr, spearmanr
+
+    fn = pearsonr if method == "pearson" else spearmanr
+    vals = []
+    for t in np.unique(date_idx):
+        m = date_idx == t
+        if m.sum() < 2:
+            continue
+        r = fn(pred[m], y[m])
+        if not np.isnan(r.statistic):
+            vals.append(r.statistic)
+    return np.asarray(vals, dtype=np.float64)
+
 
 def return_metrics(nav: np.ndarray,
                    benchmark_nav: Optional[np.ndarray] = None,

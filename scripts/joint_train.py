@@ -21,15 +21,15 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+import gym
 import numpy as np
 import torch
 from tianshou.data import Collector, VectorReplayBuffer
-from tianshou.env import DummyVectorEnv
 
 from orange_quant.rl.dataset import load_config, load_or_build, RotationDataset
-from orange_quant.rl.env import RotationEnv
 from orange_quant.rl.network import MultiDiscreteActor, RotationCritic
 from orange_quant.rl.policy import MultiDiscretePPO
+from orange_quant.rl.train import make_envs
 
 N_UNIFIED = 9
 
@@ -45,21 +45,6 @@ def truncate_ds(ds: RotationDataset, n: int) -> RotationDataset:
         zmean=ds.zmean[:n].copy(),
         zstd=ds.zstd[:n].copy(),
     )
-
-
-def make_envs(ds, segment, horizon, env_cfg, n_envs, seed_base, penalty):
-    return DummyVectorEnv([
-        (lambda i=i: RotationEnv(
-            ds, segment=segment, horizon=horizon,
-            tiers=env_cfg["tiers"], max_weight=env_cfg["max_weight"],
-            cost_rate=env_cfg["cost_rate"], turnover_penalty=penalty,
-            baseline_reward=env_cfg.get("baseline_reward", False),
-            decision_every=env_cfg.get("decision_every", 1),
-            obs_noise=env_cfg.get("obs_noise", 0.0),
-            seed=seed_base + i,
-        ))
-        for i in range(n_envs)
-    ])
 
 
 def main() -> None:
@@ -101,18 +86,22 @@ def main() -> None:
         reward_normalization=b_cfg["ppo"]["reward_normalization"],
         value_clip=b_cfg["ppo"]["value_clip"], deterministic_eval=True,
         hold_bias=b_cfg["ppo"].get("hold_bias", 0.0),
-        action_space=__import__("gym").spaces.MultiDiscrete(np.array([4] * N_UNIFIED)),
-        observation_space=__import__("gym").spaces.Box(
+        action_space=gym.spaces.MultiDiscrete(np.array([4] * N_UNIFIED)),
+        observation_space=gym.spaces.Box(
             low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32),
     )
 
     n_envs = 4
-    pen_a = env_a.get("turnover_penalty", 0.0)
-    pen_b = env_b.get("turnover_penalty", 0.0)
-    train_envs_a = make_envs(ds_a, "train", env_a["horizon"], env_a, n_envs, seed, pen_a)
-    train_envs_b = make_envs(ds_b, "train", env_b["horizon"], env_b, n_envs, seed + 100, pen_b)
-    val_envs_a = make_envs(ds_a, "valid", env_a["horizon"], env_a, args.test_episodes, seed, 0.0)
-    val_envs_b = make_envs(ds_b, "valid", env_b["horizon"], env_b, args.test_episodes, seed + 100, 0.0)
+    train_envs_a = make_envs(ds_a, "train", env_a["horizon"], env_a, n_envs, seed,
+                             turnover_penalty=env_a.get("turnover_penalty", 0.0),
+                             baseline_reward=env_a.get("baseline_reward", False),
+                             obs_noise=env_a.get("obs_noise", 0.0))
+    train_envs_b = make_envs(ds_b, "train", env_b["horizon"], env_b, n_envs, seed + 100,
+                             turnover_penalty=env_b.get("turnover_penalty", 0.0),
+                             baseline_reward=env_b.get("baseline_reward", False),
+                             obs_noise=env_b.get("obs_noise", 0.0))
+    val_envs_a = make_envs(ds_a, "valid", env_a["horizon"], env_a, args.test_episodes, seed)
+    val_envs_b = make_envs(ds_b, "valid", env_b["horizon"], env_b, args.test_episodes, seed + 100)
 
     col_a = Collector(policy, train_envs_a, VectorReplayBuffer(args.step_per_epoch, n_envs))
     col_b = Collector(policy, train_envs_b, VectorReplayBuffer(args.step_per_epoch, n_envs))
@@ -124,10 +113,10 @@ def main() -> None:
     best = -np.inf
 
     for ep in range(1, args.max_epoch + 1):
-        for col, buf, rep in ((col_a, None, args.repeat), (col_b, None, args.repeat)):
+        for col in (col_a, col_b):
             col.collect(n_step=args.step_per_epoch // 2)
             policy.update(sample_size=0, buffer=col.buffer,
-                          batch_size=args.batch_size, repeat=rep)
+                          batch_size=args.batch_size, repeat=args.repeat)
             col.reset_buffer(keep_statistics=True)
 
         policy.eval()

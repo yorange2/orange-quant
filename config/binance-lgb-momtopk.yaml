@@ -66,6 +66,7 @@ strategy:
 
 backtest:
     account: 1000000
+    bars_per_year: 238             # legacy crypto-daily annualization (IR uses sqrt(238))
     benchmark: BTC
     cost_rate: 0.001               # spot taker 0.1% each side
     min_cost: 0

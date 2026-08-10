@@ -16,9 +16,8 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
-import gym
 import numpy as np
 import pandas as pd
 import torch
@@ -26,15 +25,6 @@ from tianshou.data import Batch
 
 from orange_quant.rl.dataset import load_config, bar_reader, _per_stock_features, _FEATURE_COLS
 from orange_quant.rl.env import RotationEnv
-from orange_quant.rl.network import MultiDiscreteActor, RotationCritic
-from orange_quant.rl.policy import MultiDiscretePPO
-
-
-def _build_policy(cfg: dict, ds) -> MultiDiscretePPO:
-    """Rebuild the policy graph from config and load the best checkpoint."""
-    from orange_quant.rl.backtest import load_policy as _load
-
-    return _load(cfg, ds, torch.device(cfg["model"]["device"]))
 
 
 class RLRotationRunner:
@@ -65,7 +55,9 @@ class RLRotationRunner:
             one = bars[code][bars[code].index <= today]
             if len(one) < 70:  # need warmup history for the factors
                 continue
-            f = _per_stock_features(one)
+            # longest factor window is 60 bars — only the tail matters for the
+            # last row (same trick as lgb/runner.py's lookback slice)
+            f = _per_stock_features(one.iloc[-100:])
             feats_raw[j] = f[_FEATURE_COLS].iloc[-1].fillna(0.0).to_numpy(dtype=np.float32)
         feats_z = np.clip((feats_raw - ds.zmean) / ds.zstd, -3.0, 3.0)
         obs = np.concatenate([feats_z.reshape(-1),
@@ -78,10 +70,11 @@ class RLRotationRunner:
 
     # ------------------------------------------------------------------ flow
     def run_once(self) -> dict:
+        from orange_quant.rl.backtest import load_policy
         from orange_quant.rl.dataset import load_or_build
 
         ds = load_or_build(self.cfg)
-        policy = _build_policy(self.cfg, ds)
+        policy = load_policy(self.cfg, ds, torch.device(self.cfg["model"]["device"]))
 
         # idempotency: already acted today?
         state = {}
@@ -122,8 +115,7 @@ class RLRotationRunner:
         """Diff target weights against holdings and place market orders."""
         from orange_quant.trading.execute import rebalance
 
-        return rebalance(target_w, codes, self.broker,
-                         self.cfg["market"]["quote_ccy"], self.min_notional_safety)
+        return rebalance(target_w, codes, self.broker, self.min_notional_safety)
 
 
 def main() -> None:
@@ -134,22 +126,9 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = load_config(args.config)
-    quote = cfg["market"]["quote_ccy"]
-    if args.broker == "paper":
-        from orange_quant.trading.paper_broker import PaperBroker
+    from orange_quant.trading import make_broker
 
-        if "binance" in cfg["market"]["venue"]:
-            from orange_quant.trading.binance_broker import _make_public_exchange as mk
-        else:
-            from orange_quant.trading.hyperliquid_broker import _make_exchange as mk
-        broker = PaperBroker([], quote, mk)
-    elif args.broker == "binance":
-        from orange_quant.trading.binance_broker import BinanceBroker
-        broker = BinanceBroker()
-    else:
-        from orange_quant.trading.hyperliquid_broker import HyperliquidBroker
-        broker = HyperliquidBroker()
-
+    broker = make_broker(cfg, args.broker)
     runner = RLRotationRunner(args.config, broker, force=args.force)
     result = runner.run_once()
     print(json.dumps({k: v for k, v in result.items() if k != "orders"},
