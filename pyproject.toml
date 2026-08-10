@@ -26,6 +26,7 @@ dependencies = [
     "akshare",
     "mlflow",
     "matplotlib",
+    "lightgbm>=4.7,<5",
 ]
 
 [project.optional-dependencies]

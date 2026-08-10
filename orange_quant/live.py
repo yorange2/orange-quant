@@ -94,6 +94,12 @@ class RLRotationRunner:
 
         self._prev_tiers = np.asarray(state.get("tiers", [0] * ds.n_stocks),
                                       dtype=np.int64)
+        if len(self._prev_tiers) != ds.n_stocks:
+            # stale state from a different universe (e.g. after a rebuild) —
+            # reset to all-cash rather than crash on the obs shape assert
+            print(f"[live] state tiers len {len(self._prev_tiers)} != universe "
+                  f"{ds.n_stocks}, resetting to all-cash")
+            self._prev_tiers = np.zeros(ds.n_stocks, dtype=np.int64)
         obs = self._current_obs(ds, today)
 
         policy.eval()
@@ -114,40 +120,10 @@ class RLRotationRunner:
 
     def _execute(self, target_w: Dict[str, float], codes: List[str]) -> dict:
         """Diff target weights against holdings and place market orders."""
-        balances = self.broker.get_balances() or {}
-        quote = self.cfg["market"]["quote_ccy"]
-        prices = self.broker.get_current_prices(codes) or {}
-        value = float(balances.get(quote, 0.0)) + sum(
-            float(balances.get(c, 0.0)) * prices.get(c, 0.0) for c in codes)
-        if value <= 0:
-            return {"orders": [], "message": "zero portfolio value"}
+        from orange_quant.trading.execute import rebalance
 
-        orders: List[dict] = []
-        for coin in codes:
-            tgt = target_w.get(coin, 0.0) * value
-            held = float(balances.get(coin, 0.0)) * prices.get(coin, 0.0)
-            delta = tgt - held
-            if abs(delta) < self.min_notional_safety:
-                continue
-            if delta > 0:
-                orders.append({"coin": coin, "side": "buy",
-                               "amount_quote": round(delta, 2)})
-            else:
-                qty = -delta / max(prices.get(coin, 1.0), 1e-12)
-                orders.append({"coin": coin, "side": "sell", "amount": qty})
-
-        placed = []
-        for o in orders:
-            try:
-                if o["side"] == "buy":
-                    r = self.broker.market_buy(o["coin"], o["amount_quote"])
-                else:
-                    r = self.broker.market_sell(o["coin"], o["amount"])
-                placed.append({**o, "result": r})
-            except Exception as e:  # noqa: BLE001 - per-order isolation
-                placed.append({**o, "error": str(e)})
-        print(f"[live] value={value:.2f} {quote}, {len(placed)} orders placed")
-        return {"orders": placed, "portfolio_value": round(value, 2)}
+        return rebalance(target_w, codes, self.broker,
+                         self.cfg["market"]["quote_ccy"], self.min_notional_safety)
 
 
 def main() -> None:

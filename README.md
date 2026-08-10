@@ -71,12 +71,32 @@ python -m orange_quant.server --config binance-rl-rotation --once --dry-run
 python -m orange_quant.server --config binance-rl-rotation --once
 ```
 
+### Binance LGB momentum top-k (Alpha158, seed-bagged LightGBM)
+
+The legacy qlib LGB pipeline, rebuilt on this architecture (`orange_quant.lgb`,
+config `binance-lgb-momtopk.yaml`, `strategy.type: lgb` — `server.py` dispatches
+the runner on it):
+
+```bash
+../.venv/bin/python -m orange_quant.lgb.dataset  binance-lgb-momtopk
+../.venv/bin/python -m orange_quant.lgb.train     binance-lgb-momtopk
+../.venv/bin/python -m orange_quant.lgb.backtest  binance-lgb-momtopk
+../.venv/bin/python -m orange_quant.server --config binance-lgb-momtopk --once --dry-run
+```
+
+Features are the full 158-feature qlib Alpha158 set, ported to pandas
+(`orange_quant.lgb.features`, cross-checked against qlib's expression engine:
+0 mismatches on 23 representative ops). Backtest timing matches qlib
+(`signal day t → rebalance at close[t+1] → earn [t+1,t+2]`); live does full
+daily rotation to top-k on the signal day (legacy deviation).
+
 ## Experiment results
 
 | Market | Universe | Period | Annual ret (net) | Sharpe | vs benchmark |
 |--------|----------|--------|------------------|--------|--------------|
 | A-share RL rotation | top-50 liquid (frozen 2012) | test 2023–2026 | −5.0% | −0.31 | equal-weight +3.0%/yr |
 | Binance RL rotation | top-20 (frozen 2026) | test 2025–2026 | +70.9% | 0.55 | BTC +50.2%/yr (3-epoch smoke) |
+| Binance LGB momtopk | top-50 (frozen 2026-08) | test 2026-02–08 | −8.2% (BTC −17.1%) | IC 0.043 | excess +11.2%/yr, IR 0.26 |
 
 Data-quality note: the new Tencent-only dataset fixes the legacy store's
 2022-01~2022-05 data hole (4.5 months of zeros) and uses hfq (correct
