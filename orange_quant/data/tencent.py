@@ -97,8 +97,7 @@ def fetch_daily(symbol: str, start: str, end: str) -> pd.DataFrame:
         first = min(batch)
         if first <= start:
             break
-        y, m, d = (int(x) for x in first.split("-"))
-        cur_end = f"{y}-{m:02d}-{d - 1:02d}" if d > 1 else f"{y}-{m - 1:02d}-28" if m > 1 else f"{y - 1}-12-31"
+        cur_end = (pd.Timestamp(first) - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
     rows = [merged[k] for k in sorted(merged) if start <= k <= end]
     if not rows:
@@ -110,6 +109,16 @@ def fetch_daily(symbol: str, start: str, end: str) -> pd.DataFrame:
     for col in ["open", "close", "high", "low", "volume", "amount"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
+
+
+def _normalize_units(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """Volume lots→shares (except STAR board and indices) and amount 万元→元.
+
+    The unit rules are a documented past bug source — keep them in one place."""
+    if not symbol.startswith(("SH688", "SZ399", "SH000")):
+        df["volume"] = df["volume"] * 100
+    df["amount"] = df["amount"] * 10000
+    return df.dropna(subset=["close"])
 
 
 def fetch_symbol(symbol: str, start: str, end: str, out_dir: Path,
@@ -133,10 +142,7 @@ def fetch_symbol(symbol: str, start: str, end: str, out_dir: Path,
             return symbol, f"{type(e).__name__}: {e}"
         if df.empty:
             return symbol, None  # nothing new
-        if not symbol.startswith(("SH688", "SZ399", "SH000")):
-            df["volume"] = df["volume"] * 100
-        df["amount"] = df["amount"] * 10000
-        df = df.dropna(subset=["close"])
+        df = _normalize_units(df, symbol)
         fresh = df[df["date"] > last]
         if fresh.empty:
             return symbol, None
@@ -151,11 +157,7 @@ def fetch_symbol(symbol: str, start: str, end: str, out_dir: Path,
         df = fetch_daily(symbol, start, end)
         if df.empty:
             return symbol, "no data"
-        # volume: lots → shares except STAR board and indices (verified units)
-        if not symbol.startswith(("SH688", "SZ399", "SH000")):
-            df["volume"] = df["volume"] * 100
-        df["amount"] = df["amount"] * 10000  # 万元 → 元
-        df = df.dropna(subset=["close"])
+        df = _normalize_units(df, symbol)
         df["symbol"] = symbol
         df[["date", "symbol", "open", "high", "low", "close", "volume", "amount"]].to_csv(
             csv_path, index=False

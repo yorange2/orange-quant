@@ -20,6 +20,7 @@ market:
 # -- Data config --
 data:
     raw_dir: "data/binance_h1_raw"
+    freq: "1h"                            # bar frequency (drives the data refresh)
     start_time: "2017-01-01"              # 下载起点（小时频全历史）
     end_time: "2026-08-07"
 
@@ -88,6 +89,10 @@ ppo:
     num_envs: 4
     test_episodes: 20
     seed: 42
+
+# -- Backtest --
+backtest:
+    bars_per_year: 252                 # policy-step bars per year (annualization)
 
 # -- Paths --
 paths:

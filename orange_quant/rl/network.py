@@ -33,22 +33,11 @@ class MultiCategorical:
     def sample(self) -> torch.Tensor:
         return self._dist.sample()  # (B, n_stocks) int64
 
-    def rsample(self) -> torch.Tensor:  # discrete — same as sample
-        return self._dist.sample()
-
     def log_prob(self, act: torch.Tensor) -> torch.Tensor:
         return self._dist.log_prob(act).sum(dim=-1)  # (B,)
 
     def entropy(self) -> torch.Tensor:
         return self._dist.entropy().sum(dim=-1)  # (B,)
-
-    @property
-    def mean(self) -> torch.Tensor:
-        return self._dist.mean
-
-    @property
-    def std(self) -> torch.Tensor:
-        return self._dist.std
 
 
 def _to_torch(obs, device: torch.device) -> torch.Tensor:

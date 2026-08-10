@@ -28,23 +28,17 @@ nav.png (3-line chart vs BTC and equal-weight).
 from __future__ import annotations
 
 import argparse
-import json
 import pickle
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 from orange_quant.lgb.dataset import LGBDataset, load_or_build, load_config
 from orange_quant.lgb.ensemble import EnsembleLGB
-from orange_quant.rl.metrics import return_metrics
-
-_BARS_PER_YEAR = 238.0  # crypto daily (legacy IR annualized by sqrt(238))
+from orange_quant.rl.backtest import benchmark_closes, plot_navs, write_metrics
+from orange_quant.rl.metrics import bars_per_year, per_date_corr, return_metrics
 
 
 def load_model(cfg: dict, ckpt: str | None = None) -> EnsembleLGB:
@@ -65,21 +59,14 @@ def predict_block(model: EnsembleLGB, feats: np.ndarray, t0: int, t1: int) -> np
 
 def compute_ic(pred: np.ndarray, label: np.ndarray, t0: int, t1: int) -> Dict[str, float]:
     """Per-decision-day Pearson/Spearman IC of pred vs label, mean ± std."""
-    from scipy.stats import pearsonr, spearmanr
-
-    ics, rics = [], []
-    for k, t in enumerate(range(t0, t1 + 1)):
-        row = label[t]
-        valid = ~np.isnan(row)
-        if valid.sum() < 2:
-            continue
-        r = pearsonr(pred[k][valid], row[valid])
-        rk = spearmanr(pred[k][valid], row[valid])
-        if not np.isnan(r.statistic):
-            ics.append(r.statistic)
-        if not np.isnan(rk.statistic):
-            rics.append(rk.statistic)
-    ics, rics = np.asarray(ics), np.asarray(rics)
+    block = label[t0 : t1 + 1]
+    valid = ~np.isnan(block)
+    rows = np.argwhere(valid)
+    flat_pred = pred[valid]
+    flat_label = block[valid]
+    date_idx = rows[:, 0]
+    ics = per_date_corr(flat_pred, flat_label, date_idx, "pearson")
+    rics = per_date_corr(flat_pred, flat_label, date_idx, "spearman")
     return {
         "ic_mean": float(ics.mean()) if len(ics) else float("nan"),
         "ic_std": float(ics.std()) if len(ics) else float("nan"),
@@ -95,12 +82,8 @@ def benchmark_nav(ds: LGBDataset, cfg: dict, t0: int, t1: int) -> Tuple[np.ndarr
     Row k (signal day t) covers ret[t+1] = close[t+2]/close[t+1] − 1, aligned
     with the strategy's drift for the same row.
     """
-    sym = cfg["market"]["benchmark_symbol"]
-    raw = Path(cfg["data"]["raw_dir"]) / f"{sym}.csv"
-    idx = pd.read_csv(raw, parse_dates=["date"]).set_index("date").sort_index()
-    dates = pd.DatetimeIndex(ds.dates)
-    c = idx["close"].reindex(dates).to_numpy()
-    btc_ret = np.full(len(dates), 0.0)
+    c = benchmark_closes(cfg, ds.dates).to_numpy()
+    btc_ret = np.zeros(len(c))
     ok = ~np.isnan(c[:-1])
     btc_ret[:-1][ok] = c[1:][ok] / c[:-1][ok] - 1.0
 
@@ -110,7 +93,9 @@ def benchmark_nav(ds: LGBDataset, cfg: dict, t0: int, t1: int) -> Tuple[np.ndarr
     return b, ew
 
 
-def run_backtest(cfg: dict, ds: LGBDataset, model: EnsembleLGB) -> pd.DataFrame:
+def run_backtest(cfg: dict, ds: LGBDataset, preds: np.ndarray) -> pd.DataFrame:
+    """TopkDropout rollout over the test segment. ``preds`` is (D, N) for the
+    decision days [test_start, test_end−2] (computed once by the caller)."""
     strat = cfg["strategy"]
     bt = cfg["backtest"]
     topk, n_drop, hold_thresh = (int(strat["topk"]), int(strat["n_drop"]),
@@ -121,7 +106,6 @@ def run_backtest(cfg: dict, ds: LGBDataset, model: EnsembleLGB) -> pd.DataFrame:
 
     test_s, test_e = ds.split_idx["test"]
     t1 = test_e - 2                                 # last signal day
-    preds = predict_block(model, ds.feats, test_s, t1)
     close = ds.close                                # (T, N) NaN where no bar
 
     cash = account
@@ -206,47 +190,34 @@ def main() -> None:
     test_s, test_e = ds.split_idx["test"]
     t1 = test_e - 2
     preds = predict_block(model, ds.feats, test_s, t1)
-    rl = run_backtest(cfg, ds, model)
+    rl = run_backtest(cfg, ds, preds)
     rl.to_csv(out_dir / "nav.csv", index=False)
     print(f"[lgb-backtest] {len(rl)} decision days, final NAV {rl['nav'].iloc[-1]:.4f}")
 
     btc_nav, ew_nav = benchmark_nav(ds, cfg, test_s, t1)
     t = min(len(rl), len(btc_nav), len(ew_nav))
+    bpy = bars_per_year(cfg)
     metrics = return_metrics(
         rl["nav"].to_numpy()[:t],
         benchmark_nav=btc_nav[:t],
         turnover=rl["turnover"].to_numpy()[:t],
-        annualize=_BARS_PER_YEAR,
-        bars_per_year=_BARS_PER_YEAR,
+        annualize=bpy,
+        bars_per_year=bpy,
     )
     metrics.update(compute_ic(preds, ds.label, test_s, t1))
     metrics["benchmark_btc_nav"] = float(btc_nav[-1])
     metrics["benchmark_equal_weight_nav"] = float(ew_nav[-1])
     metrics["policy_nav"] = float(rl["nav"].iloc[-1])
-    with open(out_dir / "metrics.json", "w") as f:
-        json.dump(metrics, f, indent=2, ensure_ascii=False)
+    write_metrics(metrics, out_dir, "回测指标 (vs BTC)",
+                  signed_prefixes=("annual", "excess", "information", "ic_", "rank_"))
 
-    print("\n========== 回测指标 (vs BTC) ==========")
-    for k, v in metrics.items():
-        if isinstance(v, float):
-            print(f"  {k:<28} {v:+.4f}" if k.startswith(("annual", "excess", "information", "ic_", "rank_"))
-                  else f"  {k:<28} {v:.4f}")
-
-    # ---- plot ----
     dates = pd.to_datetime(rl["date"]).to_numpy()
-    plt.rcParams["font.sans-serif"] = ["PingFang SC", "Heiti SC", "Arial Unicode MS"]
-    plt.rcParams["axes.unicode_minus"] = False
-    fig, ax = plt.subplots(figsize=(10, 5))
-    for name, nv in zip(["LGB 策略", "等权 top50", "BTC"],
-                        [rl["nav"].to_numpy()[:t], ew_nav[:t], btc_nav[:t]]):
-        ax.plot(dates[: len(nv)], nv / nv[0], label=name, linewidth=1.5)
-    ax.set_title(f"binance LGB momtopk backtest ({dates[0].astype('datetime64[D]')} ~ "
-                 f"{dates[len(rl) - 1].astype('datetime64[D]')})")
-    ax.set_ylabel("NAV (normalized)")
-    ax.legend()
-    ax.grid(alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(out_dir / "nav.png", dpi=150)
+    plot_navs({"LGB 策略": rl["nav"].to_numpy()[:t], "等权 top50": ew_nav[:t],
+               "BTC": btc_nav[:t]},
+              dates,
+              f"binance LGB momtopk backtest ({dates[0].astype('datetime64[D]')} ~ "
+              f"{dates[len(rl) - 1].astype('datetime64[D]')})",
+              out_dir / "nav.png")
     print(f"\n[lgb-backtest] outputs → {out_dir}/")
     print("[lgb-backtest] done")
 

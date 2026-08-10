@@ -23,23 +23,15 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
-import torch
-from tianshou.data import Batch
 
-from orange_quant.rl.backtest import load_policy
-from orange_quant.rl.dataset import load_config, load_or_build, RotationDataset
+from orange_quant.rl.backtest import rollout
+from orange_quant.rl.dataset import (
+    first_at_or_after, last_at_or_before, load_config, load_or_build, RotationDataset,
+)
 from orange_quant.rl.env import RotationEnv
-from orange_quant.rl.metrics import return_metrics
+from orange_quant.rl.metrics import bars_per_year, return_metrics
 from orange_quant.rl.train import train_policy
-
-
-def _idx(ds: RotationDataset, day: str, side: str) -> int:
-    ts = pd.Timestamp(day)
-    if side == "start":
-        return int(ds.dates.searchsorted(np.datetime64(ts)))
-    return int(ds.dates.searchsorted(np.datetime64(ts), side="right")) - 1
 
 
 def walk_forward(cfg: dict, ds: RotationDataset, window_months: int,
@@ -62,9 +54,9 @@ def walk_forward(cfg: dict, ds: RotationDataset, window_months: int,
         tr_end = ws - pd.Timedelta(days=1)
         tr_start = tr_end - pd.DateOffset(years=train_years) + pd.Timedelta(days=1)
         val_start = tr_end - pd.DateOffset(months=6) + pd.Timedelta(days=1)
-        a, b = _idx(ds, str(tr_start.date()), "start"), _idx(ds, str(tr_end.date()), "end")
-        va, vb = _idx(ds, str(val_start.date()), "start"), _idx(ds, str(tr_end.date()), "end")
-        ta, tb = _idx(ds, str(ws.date()), "start"), _idx(ds, str(we.date()), "end")
+        a, b = first_at_or_after(ds.dates, tr_start), last_at_or_before(ds.dates, tr_end)
+        va, vb = first_at_or_after(ds.dates, val_start), b
+        ta, tb = first_at_or_after(ds.dates, ws), last_at_or_before(ds.dates, we)
         if tb <= ta or b <= a:
             print(f"[wf] window {ws.date()}~{we.date()} not covered, skip")
             continue
@@ -85,34 +77,20 @@ def walk_forward(cfg: dict, ds: RotationDataset, window_months: int,
                           cost_rate=cfg["env"]["cost_rate"], turnover_penalty=0.0,
                           decision_every=cfg["env"].get("decision_every", 1),
                           start_idx=ta, seed=0)
-        policy.eval()
-        nav = 1.0
-        w_prev = None
-        rows = []
-        obs, _ = env.reset()
-        done = False
-        while not done:
-            with torch.no_grad():
-                act = policy(Batch(obs=obs[None])).act[0]
-            obs, rew, term, trunc, info = env.step(act)
-            nav *= 1.0 + rew
-            w = info["weights"]
-            rows.append({"date": info["date"], "ret": rew, "nav": nav,
-                         "turnover": float(np.abs(w - (w_prev if w_prev is not None else 0)).sum()) / 2})
-            w_prev = w
-            done = term or trunc
-        oos_rows.extend(rows)
-        wret = rows[-1]["nav"] - 1.0
+        window_rows = rollout(policy, env)
+        oos_rows.extend(window_rows.to_dict("records"))
+        wret = float(window_rows["nav"].iloc[-1]) - 1.0
         per_window.append({"window": f"{ws.date()}~{we.date()}",
-                           "oos_return": round(wret, 4), "n_days": len(rows),
+                           "oos_return": round(wret, 4), "n_days": len(window_rows),
                            "best_valid": round(best_rew, 4)})
-        print(f"[wf] window OOS return: {wret:+.4f} ({len(rows)} days)")
+        print(f"[wf] window OOS return: {wret:+.4f} ({len(window_rows)} days)")
 
     # ---- aggregate OOS curve ----
     df = pd.DataFrame(oos_rows)
     navs = df["nav"].to_numpy()
     turnover = df["turnover"].to_numpy()
-    m = return_metrics(navs, turnover=turnover)
+    bpy = bars_per_year(cfg)
+    m = return_metrics(navs, turnover=turnover, annualize=bpy, bars_per_year=bpy)
     summary = {
         "windows": per_window,
         "oos_total_return": float(m["total_return"]),

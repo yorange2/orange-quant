@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 
 from orange_quant.lgb.features import FEATURE_COLS, alpha158_features
-from orange_quant.rl.dataset import bar_reader, load_config
+from orange_quant.rl.dataset import load_bars_and_calendar, load_config, segment_idx
 
 
 @dataclass
@@ -61,6 +61,10 @@ def _label_cs_zscore(label: np.ndarray) -> np.ndarray:
     Matches qlib CSZScoreNorm applied after DropnaLabel: each day's mean/std
     are computed over the coins with a valid label that day only.
     """
+    # Deliberately a per-date loop, not a vectorized nanmean/nanstd: the
+    # vectorized form sums in a different order and shifts the stored float32
+    # labels by ~1e-6, which would make every cached features.npz irreproducible
+    # for no real gain (this runs once per dataset build).
     out = np.full_like(label, np.nan, dtype=np.float64)
     for t in range(label.shape[0]):
         row = label[t]
@@ -78,30 +82,11 @@ def _label_cs_zscore(label: np.ndarray) -> np.ndarray:
 
 def build_dataset(config: dict) -> LGBDataset:
     """Load raw CSV bars, compute Alpha158 features/label/returns, cache."""
-    from orange_quant.data.universe import freeze_universe as freeze
-
-    data_end = config["data"]["end_time"]
     train_s, train_e = config["train"]["start"], config["train"]["end"]
     valid_s, valid_e = config["valid"]["start"], config["valid"]["end"]
     test_s, test_e = config["test"]["start"], config["test"]["end"]
-    uni = config["universe"]
-    warmup_start = config["features"]["warmup_start"]
 
-    codes = freeze(uni["raw_dir"], uni["top_n"], uni["freeze_date"],
-                   uni["liquidity_start"],
-                   membership=uni.get("membership"),
-                   min_history_days=uni.get("min_history_days", 250))
-    print(f"[lgb-data] frozen universe: {len(codes)} names, "
-          f"freeze_date={uni['freeze_date']}")
-
-    read = bar_reader(config)
-    w0, w1 = pd.Timestamp(warmup_start), pd.Timestamp(data_end)
-    bars = {code: read(code) for code in codes}
-    bars = {c: b for c, b in bars.items() if b is not None}
-    cal = pd.DatetimeIndex(sorted({
-        d for b in bars.values() for d in b.index if w0 <= d <= w1
-    }))
-    print(f"[lgb-data] calendar {cal[0].date()} ~ {cal[-1].date()} ({len(cal)} days)")
+    codes, bars, cal = load_bars_and_calendar(config, "lgb-data")
 
     feats = np.full((len(cal), len(codes), len(FEATURE_COLS)), np.nan, np.float32)
     label = np.full((len(cal), len(codes)), np.nan, np.float32)
@@ -126,16 +111,10 @@ def build_dataset(config: dict) -> LGBDataset:
 
     label = _label_cs_zscore(label)
 
-    def first_at_or_after(day: str) -> int:
-        return int(cal.searchsorted(pd.Timestamp(day)))
-
-    def last_at_or_before(day: str) -> int:
-        return int(cal.searchsorted(pd.Timestamp(day), side="right")) - 1
-
     split_idx = {
-        "train": (first_at_or_after(train_s), last_at_or_before(train_e)),
-        "valid": (first_at_or_after(valid_s), last_at_or_before(valid_e)),
-        "test": (first_at_or_after(test_s), last_at_or_before(test_e)),
+        "train": segment_idx(cal, train_s, train_e),
+        "valid": segment_idx(cal, valid_s, valid_e),
+        "test": segment_idx(cal, test_s, test_e),
     }
     for name, (a, b) in split_idx.items():
         print(f"[lgb-data] {name}: {cal[a].date()} ~ {cal[b].date()} "

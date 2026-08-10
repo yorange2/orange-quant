@@ -86,6 +86,10 @@ ppo:
     test_episodes: 20                           # valid 段评估 episode 数
     seed: 42
 
+# -- Backtest --
+backtest:
+    bars_per_year: 252                 # policy-step bars per year (annualization)
+
 # -- Paths --
 paths:
     model_dir: "models/csi300-rl-rotation"

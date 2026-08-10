@@ -1,12 +1,9 @@
 """Unified dataset build entry: ``python -m orange_quant.data.build --exchange ...``.
 
-Replaces the per-exchange ``biance_lgb_momtopk.data.build`` /
-``hyperliquid_lgb_momtopk.data.build`` entry points (kept as thin shims for
-back-compat). Venue-specific fetch hooks live in ``orange_quant.data.sources``.
+Venue-specific fetch hooks live in ``orange_quant.data.sources``.
 """
 
 import argparse
-import sys
 
 from orange_quant.data.sources import BinanceSource, DataSourceHooks, HyperliquidSource
 
@@ -17,11 +14,12 @@ _SOURCES = {
 
 
 def get_source(exchange: str) -> DataSourceHooks:
+    """Venue name → data-source hooks. The single venue→source dispatch point."""
     try:
         return _SOURCES[exchange.lower()]()
     except KeyError:
-        print(f"❌ Unknown exchange '{exchange}'. Available: {', '.join(_SOURCES)}")
-        sys.exit(1)
+        raise ValueError(
+            f"unknown exchange '{exchange}'. Available: {', '.join(_SOURCES)}") from None
 
 
 def main():
@@ -40,13 +38,9 @@ def main():
     print(f"📥 Building the {source.label} spot {args.freq}-bar dataset (Top {args.top})")
     print("=" * 60)
 
-    if hasattr(source, "rebuild_data"):
-        source.rebuild_data(top=args.top, start=args.start, force_download=args.force,
-                            freq=args.freq)
-    else:
-        from orange_quant.data import pipeline
-        pipeline.rebuild_data(source.build_source(), top=args.top, start=args.start,
-                              force_download=args.force, freq=args.freq)
+    from orange_quant.data import pipeline
+    pipeline.rebuild_data(source.build_source(), top=args.top, start=args.start,
+                          force_download=args.force, freq=args.freq)
 
 
 if __name__ == "__main__":

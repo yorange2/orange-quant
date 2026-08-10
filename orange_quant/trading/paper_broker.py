@@ -10,15 +10,11 @@ the coin-based broker interface the core runner/predictor expect
 
 from typing import Callable, Dict, List, Optional
 
-from orange_quant.trading.broker import Broker
+from orange_quant.trading.broker import CcxtBroker
 from datetime import datetime
 
-import pandas as pd
 
-_DEFAULT_MIN_NOTIONAL = 10.0
-
-
-class PaperBroker(Broker):
+class PaperBroker(CcxtBroker):
     def __init__(
         self,
         coins: List[str],
@@ -56,55 +52,17 @@ class PaperBroker(Broker):
             print(f"[broker] ❌ Connection failed: {e}")
             raise
 
-    def _symbol(self, coin: str) -> str:
-        return f"{coin}/{self.quote_ccy}"
-
     def get_balances(self) -> Dict[str, float]:
         return {k: v for k, v in self._balance.items() if v > 0}
 
     def get_quote_balance(self) -> float:
         return self._balance.get(self.quote_ccy, 0.0)
 
-    def get_current_prices(self, coins: List[str]) -> Dict[str, float]:
-        symbols = [self._symbol(c) for c in coins]
-        tickers = self.exchange.fetch_tickers(symbols)
-        result = {}
-        for sym, t in tickers.items():
-            price = t.get("last") or t.get("close")
-            if price:
-                result[sym.split("/")[0]] = float(price)
-        return result
-
-    def fetch_ohlcv(self, coin: str, timeframe: str = "1d", limit: int = 365) -> pd.DataFrame:
-        duration_ms = self.exchange.parse_timeframe(timeframe) * 1000
-        since = self.exchange.milliseconds() - limit * duration_ms
-        ohlcv = self.exchange.fetch_ohlcv(self._symbol(coin), timeframe, since=since, limit=limit)
-        df = pd.DataFrame(ohlcv, columns=["datetime", "open", "high", "low", "close", "volume"])
-        df["datetime"] = pd.to_datetime(df["datetime"], unit="ms")
-        df.set_index("datetime", inplace=True)
-        return df
-
-    def get_quote_volumes(self, coins: List[str]) -> Dict[str, float]:
-        symbols = [self._symbol(c) for c in coins]
-        tickers = self.exchange.fetch_tickers(symbols)
-        result = {}
-        for sym, t in tickers.items():
-            result[sym.split("/")[0]] = float(t.get("quoteVolume") or 0)
-        return result
-
-    def get_min_notional(self, coin: str) -> float:
-        try:
-            market = self.exchange.market(self._symbol(coin))
-            min_cost = market.get("limits", {}).get("cost", {}).get("min")
-            return float(min_cost) if min_cost else _DEFAULT_MIN_NOTIONAL
-        except Exception:
-            return _DEFAULT_MIN_NOTIONAL
-
-    def market_buy(self, coin: str, amount_usd: float) -> Optional[dict]:
+    def market_buy(self, coin: str, amount_usd: float,
+                   price: Optional[float] = None) -> Optional[dict]:
         symbol = self._symbol(coin)
         try:
-            ticker = self.exchange.fetch_ticker(symbol)
-            price = ticker.get("last") or ticker.get("close")
+            price = self._reference_price(symbol, price)
             amount = amount_usd / price
             cost = amount * price
 
@@ -121,11 +79,11 @@ class PaperBroker(Broker):
             print(f"[broker] ❌ Failed to buy {coin}: {e}")
             return None
 
-    def market_sell(self, coin: str, amount: float) -> Optional[dict]:
+    def market_sell(self, coin: str, amount: float,
+                    price: Optional[float] = None) -> Optional[dict]:
         symbol = self._symbol(coin)
         try:
-            ticker = self.exchange.fetch_ticker(symbol)
-            price = ticker.get("last") or ticker.get("close")
+            price = self._reference_price(symbol, price)
 
             if self._balance.get(coin, 0) >= amount:
                 self._balance[coin] -= amount
