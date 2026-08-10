@@ -1,0 +1,255 @@
+"""Backtest: TopkDropout portfolio over the test segment, net of taker fees.
+
+Timing (matches the legacy qlib pipeline): a signal computed from features at
+day t rebalances at the close of day t+1; the new position earns
+close[t+1] → close[t+2] — exactly the return the model was trained to predict
+(label[t] = close[t+2]/close[t+1] − 1). Decision days run t ∈ [test_start,
+test_end−2]; the final mark is at close[test_end]. The live runner trades on
+the signal day instead — a deliberate legacy deviation, documented in
+runner.py.
+
+TopkDropout port (qlib contrib/strategy/signal_strategy.py):
+  * last  = held coins sorted by pred desc (NaN pred ranks last)
+  * today = top (n_drop + topk − len(last)) not-held coins by pred desc
+  * comb  = last ∪ today sorted desc; sell = last ∩ bottom-n_drop(comb) —
+    never sells a higher-ranked coin to buy a lower one
+  * buy   = today[: len(sell) + topk − len(last)]
+  * a coin is droppable only when held ≥ hold_thresh decision days
+  * budget: value = cash_after_sells × risk_degree / len(buy) — risk_degree
+    acts on CASH, not total equity (qlib semantics)
+  * fills at close[t+1], cost_rate per side; coins without a bar on the
+    execution day are skipped for both sell and buy (suspended → stay held)
+
+Outputs to paths.output_dir/: nav.csv (same schema as rl/backtest.py),
+metrics.json (return_metrics + IC/RankIC + benchmark/equal-weight NAV),
+nav.png (3-line chart vs BTC and equal-weight).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import pickle
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+from orange_quant.lgb.dataset import LGBDataset, load_or_build, load_config
+from orange_quant.lgb.ensemble import EnsembleLGB
+from orange_quant.rl.metrics import return_metrics
+
+_BARS_PER_YEAR = 238.0  # crypto daily (legacy IR annualized by sqrt(238))
+
+
+def load_model(cfg: dict, ckpt: str | None = None) -> EnsembleLGB:
+    path = Path(ckpt) if ckpt else Path(cfg["paths"]["model_dir"]) / "model.pkl"
+    with open(path, "rb") as f:
+        model = pickle.load(f)
+    print(f"[lgb-backtest] loaded model: {path}")
+    return model
+
+
+def predict_block(model: EnsembleLGB, feats: np.ndarray, t0: int, t1: int) -> np.ndarray:
+    """Predict feats[t0:t1+1] at once → (D, N) float."""
+    block = feats[t0 : t1 + 1]
+    D, N, F = block.shape
+    pred = model.predict(block.reshape(-1, F)).reshape(D, N)
+    return pred
+
+
+def compute_ic(pred: np.ndarray, label: np.ndarray, t0: int, t1: int) -> Dict[str, float]:
+    """Per-decision-day Pearson/Spearman IC of pred vs label, mean ± std."""
+    from scipy.stats import pearsonr, spearmanr
+
+    ics, rics = [], []
+    for k, t in enumerate(range(t0, t1 + 1)):
+        row = label[t]
+        valid = ~np.isnan(row)
+        if valid.sum() < 2:
+            continue
+        r = pearsonr(pred[k][valid], row[valid])
+        rk = spearmanr(pred[k][valid], row[valid])
+        if not np.isnan(r.statistic):
+            ics.append(r.statistic)
+        if not np.isnan(rk.statistic):
+            rics.append(rk.statistic)
+    ics, rics = np.asarray(ics), np.asarray(rics)
+    return {
+        "ic_mean": float(ics.mean()) if len(ics) else float("nan"),
+        "ic_std": float(ics.std()) if len(ics) else float("nan"),
+        "rank_ic_mean": float(rics.mean()) if len(rics) else float("nan"),
+        "rank_ic_std": float(rics.std()) if len(rics) else float("nan"),
+        "n_ic_days": int(len(ics)),
+    }
+
+
+def benchmark_nav(ds: LGBDataset, cfg: dict, t0: int, t1: int) -> Tuple[np.ndarray, np.ndarray]:
+    """BTC and equal-weight NAVs over the same P&L windows as the strategy.
+
+    Row k (signal day t) covers ret[t+1] = close[t+2]/close[t+1] − 1, aligned
+    with the strategy's drift for the same row.
+    """
+    sym = cfg["market"]["benchmark_symbol"]
+    raw = Path(cfg["data"]["raw_dir"]) / f"{sym}.csv"
+    idx = pd.read_csv(raw, parse_dates=["date"]).set_index("date").sort_index()
+    dates = pd.DatetimeIndex(ds.dates)
+    c = idx["close"].reindex(dates).to_numpy()
+    btc_ret = np.full(len(dates), 0.0)
+    ok = ~np.isnan(c[:-1])
+    btc_ret[:-1][ok] = c[1:][ok] / c[:-1][ok] - 1.0
+
+    rows = [t + 1 for t in range(t0, t1 + 1)]       # P&L window starts at exec day
+    b = np.cumprod(1.0 + btc_ret[rows])
+    ew = np.cumprod(1.0 + ds.ret[rows].mean(axis=1))
+    return b, ew
+
+
+def run_backtest(cfg: dict, ds: LGBDataset, model: EnsembleLGB) -> pd.DataFrame:
+    strat = cfg["strategy"]
+    bt = cfg["backtest"]
+    topk, n_drop, hold_thresh = (int(strat["topk"]), int(strat["n_drop"]),
+                                 int(strat["hold_thresh"]))
+    risk_degree, cost = float(strat["risk_degree"]), float(bt["cost_rate"])
+    account = float(bt["account"])
+    N = ds.n_stocks
+
+    test_s, test_e = ds.split_idx["test"]
+    t1 = test_e - 2                                 # last signal day
+    preds = predict_block(model, ds.feats, test_s, t1)
+    close = ds.close                                # (T, N) NaN where no bar
+
+    cash = account
+    holdings: Dict[int, float] = {}                 # coin index → shares
+    entry: Dict[int, int] = {}                      # coin index → signal day
+
+    def _pred(c: int, k: int) -> float:
+        v = preds[k][c]
+        return float(v) if not np.isnan(v) else -np.inf
+
+    rows = []
+    prev_nav = account
+    for k, t in enumerate(range(test_s, t1 + 1)):
+        exec_day = t + 1
+        price = close[exec_day].astype(np.float64)  # (N,) — avoid float32 leakage
+        held = list(holdings.keys())
+
+        last = sorted(held, key=lambda c: _pred(c, k), reverse=True)
+        n_new = n_drop + topk - len(last)
+        not_held = [c for c in range(N) if c not in holdings]
+        not_held.sort(key=lambda c: _pred(c, k), reverse=True)
+        today = not_held[: max(n_new, 0)]
+        comb = sorted(set(last) | set(today), key=lambda c: _pred(c, k), reverse=True)
+        bottom = set(comb[-n_drop:]) if n_drop > 0 else set()
+        sell = [c for c in last if c in bottom]
+        buy = today[: max(len(sell) + topk - len(last), 0)]
+
+        # ---- execute sells at close[exec_day] (suspended coins stay held) ----
+        sell_value = 0.0
+        for c in sell:
+            if t - entry[c] + 1 < hold_thresh:
+                continue                            # held too briefly
+            if np.isnan(price[c]):
+                continue                            # no bar → cannot sell
+            shares = holdings.pop(c)
+            del entry[c]
+            proceeds = shares * price[c]
+            cash += proceeds * (1.0 - cost)
+            sell_value += proceeds
+
+        # ---- buys: value = cash_after_sells × risk_degree / len(buy) ----
+        buy_value = 0.0
+        value = cash * risk_degree / len(buy) if buy else 0.0
+        for c in buy:
+            if value <= 0 or np.isnan(price[c]):
+                continue
+            shares = value / price[c]
+            cash -= value * (1.0 + cost)
+            holdings[c] = shares
+            entry[c] = t
+            buy_value += value
+
+        nav = cash + sum(sh * price[c] for c, sh in holdings.items())
+        max_w = max((sh * price[c] for c, sh in holdings.items()), default=0.0) / nav
+        rows.append({
+            "date": np.datetime_as_string(ds.dates[exec_day], unit="D"),
+            "nav": nav / account,
+            "ret": nav / prev_nav - 1.0,
+            "turnover": (sell_value + buy_value) / 2.0 / nav,
+            "n_held": len(holdings),
+            "max_w": float(max_w),
+            "in_cash": float(len(holdings) == 0),
+        })
+        prev_nav = nav
+
+    return pd.DataFrame(rows)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Backtest binance LGB momtopk")
+    parser.add_argument("config", help="config name without .yaml")
+    parser.add_argument("--ckpt", default=None, help="override model.pkl path")
+    args = parser.parse_args()
+
+    cfg = load_config(args.config)
+    ds = load_or_build(cfg)
+    model = load_model(cfg, ckpt=args.ckpt)
+
+    out_dir = Path(cfg["paths"]["output_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    test_s, test_e = ds.split_idx["test"]
+    t1 = test_e - 2
+    preds = predict_block(model, ds.feats, test_s, t1)
+    rl = run_backtest(cfg, ds, model)
+    rl.to_csv(out_dir / "nav.csv", index=False)
+    print(f"[lgb-backtest] {len(rl)} decision days, final NAV {rl['nav'].iloc[-1]:.4f}")
+
+    btc_nav, ew_nav = benchmark_nav(ds, cfg, test_s, t1)
+    t = min(len(rl), len(btc_nav), len(ew_nav))
+    metrics = return_metrics(
+        rl["nav"].to_numpy()[:t],
+        benchmark_nav=btc_nav[:t],
+        turnover=rl["turnover"].to_numpy()[:t],
+        annualize=_BARS_PER_YEAR,
+        bars_per_year=_BARS_PER_YEAR,
+    )
+    metrics.update(compute_ic(preds, ds.label, test_s, t1))
+    metrics["benchmark_btc_nav"] = float(btc_nav[-1])
+    metrics["benchmark_equal_weight_nav"] = float(ew_nav[-1])
+    metrics["policy_nav"] = float(rl["nav"].iloc[-1])
+    with open(out_dir / "metrics.json", "w") as f:
+        json.dump(metrics, f, indent=2, ensure_ascii=False)
+
+    print("\n========== 回测指标 (vs BTC) ==========")
+    for k, v in metrics.items():
+        if isinstance(v, float):
+            print(f"  {k:<28} {v:+.4f}" if k.startswith(("annual", "excess", "information", "ic_", "rank_"))
+                  else f"  {k:<28} {v:.4f}")
+
+    # ---- plot ----
+    dates = pd.to_datetime(rl["date"]).to_numpy()
+    plt.rcParams["font.sans-serif"] = ["PingFang SC", "Heiti SC", "Arial Unicode MS"]
+    plt.rcParams["axes.unicode_minus"] = False
+    fig, ax = plt.subplots(figsize=(10, 5))
+    for name, nv in zip(["LGB 策略", "等权 top50", "BTC"],
+                        [rl["nav"].to_numpy()[:t], ew_nav[:t], btc_nav[:t]]):
+        ax.plot(dates[: len(nv)], nv / nv[0], label=name, linewidth=1.5)
+    ax.set_title(f"binance LGB momtopk backtest ({dates[0].astype('datetime64[D]')} ~ "
+                 f"{dates[len(rl) - 1].astype('datetime64[D]')})")
+    ax.set_ylabel("NAV (normalized)")
+    ax.legend()
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(out_dir / "nav.png", dpi=150)
+    print(f"\n[lgb-backtest] outputs → {out_dir}/")
+    print("[lgb-backtest] done")
+
+
+if __name__ == "__main__":
+    main()

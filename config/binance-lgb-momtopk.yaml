@@ -1,0 +1,86 @@
+# =============================================================
+# Binance LightGBM momentum top-k (rebuilt on the new architecture)
+# =============================================================
+# Strategy: LightGBM (MSE on 1-day-forward return) with full Alpha158
+# features (158), seed-bagged ensemble, TopkDropout portfolio.
+# Faithful port of the legacy qlib pipeline (git tag
+# legacy-pre-rl-refactor: config/binance-lgb-momtopk.yaml), which
+# recorded IC 0.034 / net excess +17.3% / IR 0.77 (test 2026-02~06).
+#
+# Usage (from orange-quant/):
+#   ../.venv/bin/python -m orange_quant.lgb.dataset  binance-lgb-momtopk
+#   ../.venv/bin/python -m orange_quant.lgb.train     binance-lgb-momtopk
+#   ../.venv/bin/python -m orange_quant.lgb.backtest  binance-lgb-momtopk
+#   ../.venv/bin/python -m orange_quant.server --config binance-lgb-momtopk --once --dry-run
+# =============================================================
+
+market:
+    type: crypto
+    venue: binance
+    benchmark_symbol: BTC
+    quote_ccy: USDT
+
+data:
+    raw_dir: "data/binance_raw"
+    start_time: "2020-01-01"
+    end_time: "2026-08-01"          # data end; CSVs run through 2026-08-08
+
+universe:
+    provider: liquidity
+    raw_dir: "data/binance_raw"
+    liquidity_start: "2025-01-01"   # current pool — matches legacy "all" instruments
+    freeze_date: "2026-08-07"
+    top_n: 50
+    min_history_days: 200
+
+features:
+    warmup_start: "2019-06-01"      # ≥60 bars before train start (max rolling window 60)
+
+train:   { start: "2020-01-01", end: "2025-06-30" }
+valid:   { start: "2025-07-01", end: "2026-01-31" }
+test:    { start: "2026-02-01", end: "2026-08-01" }
+
+lgb:
+    loss: mse
+    num_boost_round: 1000
+    early_stopping_rounds: 100
+    learning_rate: 0.02
+    num_leaves: 15
+    feature_fraction: 0.6
+    bagging_fraction: 0.8
+    bagging_freq: 1
+    min_data_in_leaf: 100
+    lambda_l1: 2.0
+    lambda_l2: 2.0
+    seed: 42
+
+ensemble:
+    n_seeds: 5
+
+strategy:
+    type: lgb                      # server.py dispatches on this
+    topk: 20                       # target holdings
+    n_drop: 1                      # max replaced per rebalance (backtest only)
+    hold_thresh: 2                 # min days held before droppable (backtest only)
+    risk_degree: 0.70              # fraction of cash deployed (qlib semantics)
+
+backtest:
+    account: 1000000
+    benchmark: BTC
+    cost_rate: 0.001               # spot taker 0.1% each side
+    min_cost: 0
+
+paths:
+    model_dir: "models/binance-lgb-momtopk"
+    output_dir: "outputs/binance-lgb-momtopk"
+    cache_dir: "data/binance-lgb-momtopk"
+
+trading:
+    risk_degree: 0.70
+    topk: 20
+    min_trade: 20.0
+    max_position_pct: 0.25
+    lookback: 160
+    min_notional_safety: 20.0
+    state_file: "data/live_state/binance-lgb.json"
+    blacklist: "data/reduce_only_blacklist.json"

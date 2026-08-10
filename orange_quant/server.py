@@ -44,7 +44,6 @@ def run(config_name: str, once: bool, dry_run: bool, force: bool,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
     log.info(f"server: config={config_name} dry_run={dry_run} once={once}")
 
-    from orange_quant.live import RLRotationRunner
     from orange_quant.trading.paper_broker import PaperBroker
     from orange_quant.rl.dataset import load_config
 
@@ -64,7 +63,12 @@ def run(config_name: str, once: bool, dry_run: bool, force: bool,
         from orange_quant.trading.hyperliquid_broker import HyperliquidBroker
         broker = HyperliquidBroker()
 
-    runner = RLRotationRunner(config_name, broker, force=force)
+    if cfg.get("strategy", {}).get("type", "rl") == "lgb":
+        from orange_quant.lgb.runner import LGBRotationRunner
+        runner = LGBRotationRunner(config_name, broker, force=force)
+    else:
+        from orange_quant.live import RLRotationRunner
+        runner = RLRotationRunner(config_name, broker, force=force)
 
     if once:
         _heartbeat()
@@ -100,7 +104,8 @@ def main() -> None:
     ap.add_argument("--hour", type=int, default=0, help="daily run hour (UTC)")
     ap.add_argument("--minute", type=int, default=15, help="daily run minute")
     args = ap.parse_args()
-    run(args.config, args.dry_run, args.once, args.force, args.hour, args.minute)
+    run(args.config, once=args.once, dry_run=args.dry_run, force=args.force,
+        hour=args.hour, minute=args.minute)
 
 
 if __name__ == "__main__":

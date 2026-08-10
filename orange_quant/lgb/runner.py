@@ -1,0 +1,144 @@
+"""Live LGB rotation runner: today's bars → features → model → top-k → orders.
+
+Mirrors ``orange_quant.live.RLRotationRunner``: idempotent per day via a
+state file, market orders through the injected broker (BinanceBroker /
+PaperBroker), reduce-only blacklist applied to the rankings.
+
+Deliberate deviation from the backtest (same as the legacy live runner): the
+backtest rebalances one day after the signal (qlib ``shift=1`` + close fills),
+while live trades on the signal day and does FULL daily rotation to top-k —
+``n_drop``/``hold_thresh`` from the config are backtest-only knobs.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import pickle
+from pathlib import Path
+from typing import Dict, List
+
+import numpy as np
+import pandas as pd
+
+from orange_quant.lgb.dataset import load_or_build, load_config
+from orange_quant.lgb.features import FEATURE_COLS, alpha158_features
+from orange_quant.rl.dataset import bar_reader
+
+
+class LGBRotationRunner:
+    def __init__(self, config_name: str, broker, force: bool = False) -> None:
+        self.cfg = load_config(config_name)
+        self.broker = broker
+        self.force = force
+        trading = self.cfg.get("trading", {})
+        self.risk_degree = float(trading.get("risk_degree", 0.95))
+        self.topk = int(trading.get("topk", 20))
+        self.min_trade = float(trading.get("min_trade", 20.0))
+        self.max_position_pct = float(trading.get("max_position_pct", 0.25))
+        self.lookback = int(trading.get("lookback", 160))
+        self.min_notional_safety = float(trading.get("min_notional_safety", 20.0))
+        self.blacklist_path = trading.get("blacklist")
+        self.state_file = Path(trading.get("state_file", "data/live_state/state.json"))
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+
+        self.ds = load_or_build(self.cfg)          # cached codes + splits (cheap)
+        with open(Path(self.cfg["paths"]["model_dir"]) / "model.pkl", "rb") as f:
+            self.model = pickle.load(f)
+        print(f"[lgb-live] loaded model + {len(self.ds.codes)}-coin universe")
+
+    # ------------------------------------------------------------------ steps
+    def _features_today(self, date: str) -> np.ndarray:
+        """Raw Alpha158 features for the latest closed bar ≤ date, per coin."""
+        read = bar_reader(self.cfg)
+        today = pd.Timestamp(date)
+        X = np.full((len(self.ds.codes), len(FEATURE_COLS)), np.nan, np.float32)
+        for j, code in enumerate(self.ds.codes):
+            b = read(code)
+            if b is None:
+                continue
+            one = b[b.index <= today]
+            if len(one) < 60:                       # feature warmup floor
+                continue
+            f = alpha158_features(one.iloc[-self.lookback:])
+            X[j] = f[FEATURE_COLS].iloc[-1].to_numpy(np.float32)
+        return X
+
+    def _target_weights(self, pred: np.ndarray) -> Dict[str, float]:
+        """Full daily rotation: top-k by pred desc, equal-weight × risk_degree."""
+        from orange_quant.blacklist import load as load_blacklist
+
+        ranked = np.argsort(-pred)                  # best first; -inf ranks last
+        codes = self.ds.codes
+        black = load_blacklist(self.blacklist_path) if self.blacklist_path else set()
+        w = min(self.risk_degree / self.topk, self.max_position_pct)
+        target: Dict[str, float] = {}
+        for c in ranked:
+            coin = codes[c]
+            if coin in black or np.isnan(pred[c]):
+                continue
+            target[coin] = w
+            if len(target) >= self.topk:
+                break
+        return target
+
+    def _today(self) -> str:
+        return pd.Timestamp.utcnow().strftime("%Y-%m-%d")
+
+    # ------------------------------------------------------------------ flow
+    def run_once(self) -> dict:
+        state = {}
+        if self.state_file.exists():
+            state = json.loads(self.state_file.read_text())
+        today = self._today()
+        if state.get("date") == today and not self.force:
+            print(f"[lgb-live] already executed on {today}, skipping (--force to rerun)")
+            return {"skipped": True, "date": today}
+
+        X = self._features_today(today)
+        pred = self.model.predict(X)
+        pred = np.where(np.isnan(X).all(axis=1), -np.inf, pred)  # no-history coins
+        target = self._target_weights(pred)
+
+        from orange_quant.trading.execute import rebalance
+
+        result = rebalance(target, self.ds.codes, self.broker,
+                           self.cfg["market"]["quote_ccy"], self.min_notional_safety)
+        result.update({
+            "date": today,
+            "targets": {k: round(v, 4) for k, v in target.items()},
+        })
+        self.state_file.write_text(json.dumps(result, indent=2, ensure_ascii=False))
+        print(f"[lgb-live] state written: {self.state_file}")
+        return result
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="LGB rotation live runner")
+    ap.add_argument("--config", required=True, help="config name, e.g. binance-lgb-momtopk")
+    ap.add_argument("--broker", default="paper", choices=["paper", "binance"])
+    ap.add_argument("--force", action="store_true")
+    args = ap.parse_args()
+
+    cfg = load_config(args.config)
+    quote = cfg["market"]["quote_ccy"]
+    if args.broker == "paper":
+        from orange_quant.trading.paper_broker import PaperBroker
+
+        if "binance" in cfg["market"]["venue"]:
+            from orange_quant.trading.binance_broker import _make_public_exchange as mk
+        else:
+            from orange_quant.trading.hyperliquid_broker import _make_exchange as mk
+        broker = PaperBroker([], quote, mk)
+    else:
+        from orange_quant.trading.binance_broker import BinanceBroker
+        broker = BinanceBroker()
+
+    runner = LGBRotationRunner(args.config, broker, force=args.force)
+    result = runner.run_once()
+    print(json.dumps({k: v for k, v in result.items() if k != "orders"},
+                     ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()
