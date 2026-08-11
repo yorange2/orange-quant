@@ -50,9 +50,9 @@
 
 **动机**：TopK 只消费排序，MSE 优化的是回归误差——目标错配。LightGBM 原生支持 lambdarank。
 
-- [ ] label 转每日相对收益分档（如 5 档 quantile 整数 relevance），`group` = 交易日（`date_idx` 已有，dataset 层现成）
-- [ ] `lgb.loss: lambdarank` 配置化，对比 MSE 基线的 IC / 净超额
-- [ ] 备注：lambdarank 对 top 的加权天然契合 TopK 策略，值得认真做；但 A 股单日 group 大（300~2000），训练耗时预计上升
+- [x] label 转每日相对收益分档（如 5 档 quantile 整数 relevance），`group` = 交易日（`date_idx` 已有，dataset 层现成）—— 已实现（PR #25）
+- [x] `lgb.loss: lambdarank` 配置化，对比 MSE 基线的 IC / 净超额 —— **结果显著为负**：valid IC 0.0096 vs 0.0257、test IC 0.0136 vs 0.0453、RankIC −0.0255（转负）、净超额 −3.4% vs +23.8%、decile t 0.97；已排查非机制 bug（预测方差正常但逐日相关 ≈0/负）——exp gain + NDCG@10 在此池/区间学不到正确排序；基建保留（loss 分派可配置）
+- [x] 备注：lambdarank 对 top 的加权天然契合 TopK 策略，值得认真做；但 A 股单日 group 大（300~2000），训练耗时预计上升 —— 训练耗时实测**不高**（5 seeds ~3 分钟，早停 130-250 轮）；后续候选调参（如线性 label_gain、更多分档、NDCG@50、宽池 top-2000 上重试）留待再研究，本路线图内不展开
 
 ### C6. 行业中性化（需新数据）
 
