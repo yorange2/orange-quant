@@ -35,9 +35,9 @@
 
 **动机**：宽截面 A/B 只看单个 IC 数字会误判，需要一套标准报告。
 
-- [ ] `lgb/backtest.py`（或独立 `lgb/report.py`）输出：per-day IC 序列 + 累计图、ICIR、分年度 IC、**decile 收益单调性**（预测分 10 档的实际收益阶梯）
-- [ ] **多空 spread**（top decile − bottom decile 日收益）：纯 alpha 度量，剥离市场 beta——A 股实盘难做空，仅作评估指标，不进交易
-- [ ] 报告落 `outputs/<config>/report.md` + png，方便跨实验对比
+- [x] `lgb/backtest.py`（或独立 `lgb/report.py`）输出：per-day IC 序列 + 累计图、ICIR、分年度 IC、**decile 收益单调性**（预测分 10 档的实际收益阶梯）—— 已实现 `lgb/report.py`，`backtest` 主流程自动生成（PR #22）
+- [x] **多空 spread**（top decile − bottom decile 日收益）：纯 alpha 度量，剥离市场 beta——A 股实盘难做空，仅作评估指标，不进交易 —— 含 t 统计量；C1 基线上 spread 日均 +0.00237（t=3.62）
+- [x] 报告落 `outputs/<config>/report.md` + png，方便跨实验对比 —— `report.md` / `report_ic.png` / `report_deciles.png`；metrics.json 补 `icir`/`rank_icir`
 
 ### C4. 特征截面标准化 A/B（研究）
 
