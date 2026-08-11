@@ -1,0 +1,78 @@
+# =============================================================
+# A-share LightGBM momentum top-k (new architecture, cn market)
+# =============================================================
+# Strategy: LightGBM (MSE on 1-day-forward return) with full Alpha158
+# features (158), seed-bagged ensemble, TopkDropout portfolio.
+# Port of the legacy qlib pipeline (git tag legacy-pre-rl-refactor:
+# config/csi300-lgb-momtopk.yaml, IC 0.035 test 2017-2020) onto the
+# market-agnostic lgb pipeline. Universe = top-300 liquidity pool
+# frozen at 2017-12-31 (train starts 2018) — replaces the hardcoded
+# csi300 constituent membership.
+#
+# Usage (from orange-quant/):
+#   ../.venv/bin/python -m orange_quant.lgb.dataset  cn-lgb-momtopk
+#   ../.venv/bin/python -m orange_quant.lgb.train     cn-lgb-momtopk
+#   ../.venv/bin/python -m orange_quant.lgb.backtest  cn-lgb-momtopk
+# =============================================================
+
+market:
+    type: cn                      # cn: 纯研究（无实盘路径）
+    venue: tencent
+    benchmark_symbol: SH000300    # 回测基准：沪深300 指数（data/cn_raw 本地 CSV）
+    quote_ccy: CNY
+
+data:
+    raw_dir: "data/cn_raw"        # 腾讯抓取产物（每符号一个 CSV）
+    start_time: "2011-01-01"
+    end_time: "2026-08-07"        # 数据末端（CSV 已至 2026-08-07）
+
+universe:
+    provider: liquidity
+    raw_dir: "data/cn_raw"
+    freeze_date: "2017-12-31"     # train 起点前冻结（无前视）
+    liquidity_start: "2017-01-01" # 流动性窗口：冻结日前整年
+    top_n: 300                    # 日均成交额 top-300（≈ legacy csi300 池大小）
+    min_history_days: 200         # 2017 窗口 ~243 交易日，需低于窗长
+
+features:
+    warmup_start: "2017-07-01"    # ≥60 bars before train start (max rolling window 60)
+
+train:   { start: "2018-01-01", end: "2023-12-31" }
+valid:   { start: "2024-01-01", end: "2024-12-31" }
+test:    { start: "2025-01-01", end: "2026-08-01" }
+
+lgb:
+    loss: mse
+    num_boost_round: 1000
+    early_stopping_rounds: 100
+    learning_rate: 0.02
+    num_leaves: 15
+    feature_fraction: 0.6
+    bagging_fraction: 0.8
+    bagging_freq: 1
+    min_data_in_leaf: 100
+    lambda_l1: 2.0
+    lambda_l2: 2.0
+    seed: 42
+
+ensemble:
+    n_seeds: 5
+
+strategy:
+    type: lgb
+    topk: 50                      # 目标持仓（legacy csi300 语义，300 池中 50）
+    n_drop: 5                     # 每次调仓最多替换数（legacy: 5）
+    hold_thresh: 1                # 最短持有决策日数（legacy: 1）
+    risk_degree: 0.95             # 资金部署比例（qlib 语义，作用于现金）
+
+backtest:
+    account: 1000000
+    bars_per_year: 252            # A 股日线年化
+    benchmark: SH000300
+    cost_rate: 0.001              # 单边成本（佣金+印花税近似）
+    min_cost: 0
+
+paths:
+    model_dir: "models/cn-lgb-momtopk"
+    output_dir: "outputs/cn-lgb-momtopk"
+    cache_dir: "data/cn-lgb-momtopk"

@@ -107,6 +107,10 @@ def run_backtest(cfg: dict, ds: LGBDataset, preds: np.ndarray) -> pd.DataFrame:
     test_s, test_e = ds.split_idx["test"]
     t1 = test_e - 2                                 # last signal day
     close = ds.close                                # (T, N) NaN where no bar
+    # A-share suspensions: a held name can go days/weeks without a bar. Trade
+    # execution still requires a real bar (sells/buys skip NaN-price days), but
+    # NAV valuation marks suspended holdings at the last known close (ffill).
+    val_close = pd.DataFrame(close).ffill(axis=0).to_numpy(np.float64)
 
     cash = account
     holdings: Dict[int, float] = {}                 # coin index → shares
@@ -121,6 +125,7 @@ def run_backtest(cfg: dict, ds: LGBDataset, preds: np.ndarray) -> pd.DataFrame:
     for k, t in enumerate(range(test_s, t1 + 1)):
         exec_day = t + 1
         price = close[exec_day].astype(np.float64)  # (N,) — avoid float32 leakage
+        vprice = val_close[exec_day]                # (N,) ffill'd for valuation
         held = list(holdings.keys())
 
         last = sorted(held, key=lambda c: _pred(c, k), reverse=True)
@@ -158,8 +163,8 @@ def run_backtest(cfg: dict, ds: LGBDataset, preds: np.ndarray) -> pd.DataFrame:
             entry[c] = t
             buy_value += value
 
-        nav = cash + sum(sh * price[c] for c, sh in holdings.items())
-        max_w = max((sh * price[c] for c, sh in holdings.items()), default=0.0) / nav
+        nav = cash + sum(sh * vprice[c] for c, sh in holdings.items())
+        max_w = max((sh * vprice[c] for c, sh in holdings.items()), default=0.0) / nav
         rows.append({
             "date": np.datetime_as_string(ds.dates[exec_day], unit="D"),
             "nav": nav / account,
@@ -175,7 +180,7 @@ def run_backtest(cfg: dict, ds: LGBDataset, preds: np.ndarray) -> pd.DataFrame:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Backtest binance LGB momtopk")
+    parser = argparse.ArgumentParser(description="Backtest LGB momtopk")
     parser.add_argument("config", help="config name without .yaml")
     parser.add_argument("--ckpt", default=None, help="override model.pkl path")
     args = parser.parse_args()
@@ -194,28 +199,31 @@ def main() -> None:
     rl.to_csv(out_dir / "nav.csv", index=False)
     print(f"[lgb-backtest] {len(rl)} decision days, final NAV {rl['nav'].iloc[-1]:.4f}")
 
-    btc_nav, ew_nav = benchmark_nav(ds, cfg, test_s, t1)
-    t = min(len(rl), len(btc_nav), len(ew_nav))
+    bmark, ew = benchmark_nav(ds, cfg, test_s, t1)
+    bmark_sym = cfg["market"]["benchmark_symbol"]
+    t = min(len(rl), len(bmark), len(ew))
     bpy = bars_per_year(cfg)
     metrics = return_metrics(
         rl["nav"].to_numpy()[:t],
-        benchmark_nav=btc_nav[:t],
+        benchmark_nav=bmark[:t],
         turnover=rl["turnover"].to_numpy()[:t],
         annualize=bpy,
         bars_per_year=bpy,
     )
     metrics.update(compute_ic(preds, ds.label, test_s, t1))
-    metrics["benchmark_btc_nav"] = float(btc_nav[-1])
-    metrics["benchmark_equal_weight_nav"] = float(ew_nav[-1])
+    metrics[f"benchmark_{bmark_sym}_nav"] = float(bmark[-1])
+    metrics["benchmark_equal_weight_nav"] = float(ew[-1])
     metrics["policy_nav"] = float(rl["nav"].iloc[-1])
-    write_metrics(metrics, out_dir, "回测指标 (vs BTC)",
+    write_metrics(metrics, out_dir, f"回测指标 (vs {bmark_sym})",
                   signed_prefixes=("annual", "excess", "information", "ic_", "rank_"))
 
     dates = pd.to_datetime(rl["date"]).to_numpy()
-    plot_navs({"LGB 策略": rl["nav"].to_numpy()[:t], "等权 top50": ew_nav[:t],
-               "BTC": btc_nav[:t]},
+    plot_navs({"LGB 策略": rl["nav"].to_numpy()[:t],
+               f"等权 top{ds.n_stocks}": ew[:t],
+               bmark_sym: bmark[:t]},
               dates,
-              f"binance LGB momtopk backtest ({dates[0].astype('datetime64[D]')} ~ "
+              f"{cfg['market']['venue']} LGB momtopk backtest "
+              f"({dates[0].astype('datetime64[D]')} ~ "
               f"{dates[len(rl) - 1].astype('datetime64[D]')})",
               out_dir / "nav.png")
     print(f"\n[lgb-backtest] outputs → {out_dir}/")
