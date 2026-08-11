@@ -112,9 +112,59 @@ def _ic_table(ics: pd.DataFrame, label: str) -> str:
             f"{len(ics)} |")
 
 
+def _industry_exposure(positions: list, ds: LGBDataset) -> str:
+    """Markdown table of the TopK holdings' SW-industry exposure (roadmap C6).
+
+    positions[k] = [(code_idx, weight)]; mean weight per industry over
+    decision days, plus top-3 concentration and HHI of the mean weights.
+    No industry map (crypto) → returns "".
+    """
+    from orange_quant.data.industry import load_industry_map
+
+    ind = load_industry_map()
+    if not ind:
+        return ""
+    per_day = []
+    for day_pos in positions:
+        w = {}
+        for c, wt in day_pos:
+            g = ind.get(ds.codes[c])
+            if g:
+                w[g] = w.get(g, 0.0) + wt
+        per_day.append(w)
+    names = sorted({g for w in per_day for g in w})
+    mean_w = {g: sum(w.get(g, 0.0) for w in per_day) / len(per_day)
+              for g in names}
+    ranked = sorted(mean_w.items(), key=lambda kv: kv[1], reverse=True)
+    hhi = sum(v * v for _, v in ranked)
+    top3 = sum(v for _, v in ranked[:3])
+    lines = [
+        f"## TopK 持仓行业暴露（SW 一级，当前快照近似历史）",
+        f"",
+        f"| 行业 | 日均权重 |",
+        f"|---|---|",
+    ]
+    lines += [f"| {g} | {v:.2%} |" for g, v in ranked if v > 0.01]
+    lines += [
+        f"",
+        f"| 集中度指标 | 值 |",
+        f"|---|---|",
+        f"| top-3 行业合计 | {top3:.2%} |",
+        f"| HHI（平均权重） | {hhi:.4f} |",
+        f"| 行业数（>1% 权重） | {sum(1 for _, v in ranked if v > 0.01)} |",
+        f"",
+    ]
+    return "\n".join(lines)
+
+
 def generate_report(cfg: dict, ds: LGBDataset, preds: np.ndarray,
-                    out_dir: Path) -> None:
-    """Write report.md + report_ic.png + report_deciles.png into out_dir."""
+                    out_dir: Path, positions: list | None = None) -> None:
+    """Write report.md + report_ic.png + report_deciles.png into out_dir.
+
+    ``positions`` ([(code_idx, weight)] per decision day) adds the TopK
+    holdings' industry-exposure section (roadmap C6) when the SW industry map
+    is available.
+    """
     t0, t1 = _decision_rows(ds)
     ics = ic_series(preds, ds.label, t0, t1, ds.dates)
     means, spread_days, spread_t = decile_analysis(preds, ds.ret, t0, t1)
@@ -175,6 +225,8 @@ def generate_report(cfg: dict, ds: LGBDataset, preds: np.ndarray,
         f"- 多空 spread 剥离市场 beta，仅作评估；A 股实盘无法做空，不进入交易。",
         f"",
     ]
+    if positions:
+        lines += [_industry_exposure(positions, ds), ""]
     (out_dir / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
     plt.rcParams["font.sans-serif"] = ["PingFang SC", "Heiti SC", "Arial Unicode MS"]

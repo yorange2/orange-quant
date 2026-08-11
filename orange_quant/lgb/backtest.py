@@ -30,7 +30,7 @@ from __future__ import annotations
 import argparse
 import pickle
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -95,9 +95,16 @@ def benchmark_nav(ds: LGBDataset, cfg: dict, t0: int, t1: int) -> Tuple[np.ndarr
     return b, ew
 
 
-def run_backtest(cfg: dict, ds: LGBDataset, preds: np.ndarray) -> pd.DataFrame:
+def run_backtest(cfg: dict, ds: LGBDataset, preds: np.ndarray
+                 ) -> Tuple[pd.DataFrame, List[Tuple[int, float]]]:
     """TopkDropout rollout over the test segment. ``preds`` is (D, N) for the
-    decision days [test_start, test_end−2] (computed once by the caller)."""
+    decision days [test_start, test_end−2] (computed once by the caller).
+
+    Returns (nav_df, positions) where positions[k] = [(code_idx, weight)] of
+    the holdings at close of decision day k's execution (weight = value / NAV)
+    — used for the industry-exposure report (roadmap C6)."""
+
+    positions: List[List[Tuple[int, float]]]
     strat = cfg["strategy"]
     bt = cfg["backtest"]
     topk, n_drop, hold_thresh = (int(strat["topk"]), int(strat["n_drop"]),
@@ -123,6 +130,7 @@ def run_backtest(cfg: dict, ds: LGBDataset, preds: np.ndarray) -> pd.DataFrame:
         return float(v) if not np.isnan(v) else -np.inf
 
     rows = []
+    positions = []
     prev_nav = account
     for k, t in enumerate(range(test_s, t1 + 1)):
         exec_day = t + 1
@@ -167,6 +175,7 @@ def run_backtest(cfg: dict, ds: LGBDataset, preds: np.ndarray) -> pd.DataFrame:
 
         nav = cash + sum(sh * vprice[c] for c, sh in holdings.items())
         max_w = max((sh * vprice[c] for c, sh in holdings.items()), default=0.0) / nav
+        positions.append([(c, sh * vprice[c] / nav) for c, sh in holdings.items()])
         rows.append({
             "date": np.datetime_as_string(ds.dates[exec_day], unit="D"),
             "nav": nav / account,
@@ -178,7 +187,7 @@ def run_backtest(cfg: dict, ds: LGBDataset, preds: np.ndarray) -> pd.DataFrame:
         })
         prev_nav = nav
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows), positions
 
 
 def main() -> None:
@@ -197,8 +206,13 @@ def main() -> None:
     test_s, test_e = ds.split_idx["test"]
     t1 = test_e - 2
     preds = predict_block(model, ds.feats, test_s, t1)
-    rl = run_backtest(cfg, ds, preds)
+    rl, positions = run_backtest(cfg, ds, preds)
     rl.to_csv(out_dir / "nav.csv", index=False)
+    pos_df = pd.DataFrame(
+        [{"date": d, "code": ds.codes[c], "weight": w}
+         for day_pos, d in zip(positions, rl["date"])
+         for c, w in day_pos])
+    pos_df.to_csv(out_dir / "positions.csv", index=False)
     print(f"[lgb-backtest] {len(rl)} decision days, final NAV {rl['nav'].iloc[-1]:.4f}")
 
     bmark, ew = benchmark_nav(ds, cfg, test_s, t1)
@@ -231,7 +245,7 @@ def main() -> None:
 
     from orange_quant.lgb.report import generate_report
 
-    generate_report(cfg, ds, preds, out_dir)
+    generate_report(cfg, ds, preds, out_dir, positions=positions)
     print(f"\n[lgb-backtest] outputs → {out_dir}/")
     print("[lgb-backtest] done")
 
