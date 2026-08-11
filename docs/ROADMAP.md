@@ -17,10 +17,10 @@
 
 **动机**：一切 A/B 的前提。legacy qlib 版报告层有 bug、股票池写死 csi300 成分，新架构回测自算不受影响。
 
-- [ ] `config/cn-lgb-momtopk.yaml`：`market.type: cn`，top-300 流动性池（`liquidity_start/freeze_date` 参照 RL 的 A 股配置），train/valid/test ≈ 2018-2023 / 2024 / 2025-2026-08
-- [ ] 跑通 dataset → train → backtest 全链路；确认 A 股 CSV（列名/停牌日/涨跌停日）在共享日历对齐逻辑下无异常
-- [ ] backtest 基准换成指数或等权（`benchmark` 对 A 股取 SH000300，确认 cn_raw 里有指数 CSV，没有则用等权池）
-- [ ] 记录基线三件套：**IC / ICIR / TopK 净超额**，作为后续所有 A/B 的对照
+- [x] `config/cn-lgb-momtopk.yaml`：`market.type: cn`，top-300 流动性池（`liquidity_start/freeze_date` 参照 RL 的 A 股配置），train/valid/test ≈ 2018-2023 / 2024 / 2025-2026-08
+- [x] 跑通 dataset → train → backtest 全链路；确认 A 股 CSV（列名/停牌日/涨跌停日）在共享日历对齐逻辑下无异常（发现并修复：停牌日持仓估值 NaN 传染 → ffill 按最后一笔收盘价估值，交易仍要求真实 bar）
+- [x] backtest 基准换成指数或等权（`benchmark` 对 A 股取 SH000300，确认 cn_raw 里有指数 CSV，没有则用等权池）
+- [x] 记录基线三件套：**IC / ICIR / TopK 净超额**，作为后续所有 A/B 的对照 —— **IC 0.0453 / ICIR 0.255 / 净超额 +23.8% 年化**（test 2025-01~2026-07，top-300 池，vs SH000300，IR 0.675，换手 24.6 次/年；PR #21）
 
 ### C2. 截面加宽 A/B（top-50 → 300 → 800 → 2000+）
 
