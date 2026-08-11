@@ -55,6 +55,33 @@ class LGBDataset:
         return self.feats.shape[-1]
 
 
+def _cs_normalize(feats: np.ndarray, mode: str) -> np.ndarray:
+    """Per-date cross-sectional feature normalization (roadmap C4).
+
+    Both modes operate on the non-NaN cross-section of each date × feature
+    (NaN stays NaN — LightGBM consumes missing values natively):
+      * ``rank``   → percentile rank in (0, 1] (pandas pct rank);
+      * ``zscore`` → (x − mean)/std, ddof=1, masked where the cross-section
+        is constant (std ≈ 0).
+    """
+    T, N, F = feats.shape
+    out = np.empty_like(feats)
+    for f in range(F):
+        df = pd.DataFrame(feats[:, :, f])
+        if mode == "rank":
+            out[:, :, f] = df.rank(axis=1, pct=True).to_numpy(np.float32)
+        else:  # zscore
+            # explicit sub/div(axis=0): `df - df.mean(axis=1)` is ambiguous —
+            # the RangeIndex columns collide with the Series index and pandas
+            # promotes the frame to (T, T)
+            mean = df.mean(axis=1)
+            std = df.std(axis=1)
+            z = df.sub(mean, axis=0).div(std, axis=0).to_numpy(np.float32)
+            z = np.where(np.isinf(z), np.nan, z)   # const cross-section → NaN
+            out[:, :, f] = z
+    return out
+
+
 def _label_cs_zscore(label: np.ndarray) -> np.ndarray:
     """Per-date cross-sectional z-score over non-NaN entries (ddof=1).
 
@@ -108,6 +135,15 @@ def build_dataset(config: dict) -> LGBDataset:
         label_own = (c.shift(-2) / c.shift(-1) - 1.0).reindex(cal)
         ret[:, j] = ret_own.fillna(0.0).to_numpy(np.float32)
         label[:, j] = label_own.to_numpy(np.float32)
+
+    cs_norm = config.get("features", {}).get("cs_norm", "none")
+    if cs_norm == "none":
+        pass  # raw Alpha158 (legacy behavior, cached npz unchanged)
+    elif cs_norm in ("rank", "zscore"):
+        print(f"[lgb-data] per-date cross-sectional feature norm: {cs_norm}")
+        feats = _cs_normalize(feats, cs_norm)
+    else:
+        raise ValueError(f"features.cs_norm must be rank|zscore|none, got {cs_norm!r}")
 
     label = _label_cs_zscore(label)
 
