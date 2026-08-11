@@ -1,92 +1,85 @@
-# Orange Quant Roadmap：RL 数据扩充（解决"数据少"）
+# Orange Quant Roadmap：横截面选股（A 股 LGB 主线）
 
-> 创建于 2026-08-09。上一版路线图（去 qlib 全面重构）已完成，见 `docs/finished/ROADMAP.md`。
-> 本路线图针对当前 RL 策略的核心短板：**训练数据少**（横截面 9 只币 × 时序 4 年日频 ≈ 1000 训练步）。
+> 创建于 2026-08-11。上一版路线图（RL 数据扩充 R1–R6）已完成，见 `docs/finished/ROADMAP-rl-data.md`；更早的 qlib 重构版见 `docs/finished/ROADMAP.md`。
+> 核心论点：**横截面宽度是最便宜的真实样本扩充**——每天 N 只股票同场竞技，N 从 50 → 2000 是几十倍的独立信息增量（对比时序重采样只是同一根 K 线的影子）。本路线图把 A 股 LGB 选股迁到新架构后，沿"加宽截面 → 强化评估 → 损失/中性化研究"推进。
 
-## 当前基线（对照基准，test 2025-01-01 ~ 2026-08-01）
+## 现状（2026-08-11）
 
-| 配置 | 年化 | Sharpe | 换手 | 超额 vs 等权 |
-|---|---|---|---|---|
-| Binance 9 只历史池（2019 冻结） | −9.2% | −0.18 | 41× | −2.9%（IR −0.02） |
-| Binance 48 只当前池（含新币） | −26.6% | −0.48 | 43× | −21.9% |
-| A 股 50 只池（2012 冻结） | −5.0% | −0.31 | 49× | −8.1% |
-
-数据量现状：加密日频 2020-2023 train 段 ≈ 1000 步（9 只 × 4 年）；A 股 50 只 × 1945 天。
+- 新架构 LGB 流水线（`orange_quant.lgb.{dataset,train,backtest}`）市场无关，但**只有币安配置**（`binance-lgb-momtopk`：IC 0.034 / 净超额 +17.3% / IR 0.77，test 2026-02~06）
+- A 股 LGB 停在 legacy qlib 版（git tag `legacy-pre-rl-refactor`）：csi300-lgb-momtopk IC 0.035（test 2017-2020）；-2026 版（test 2023-2026）组合层指标因 qlib dev 版 PortAnaRecord bug 不可信，仅 IC 可信
+- `data/cn_raw/` 已有 **4826 只**股票日线 CSV（腾讯源，复权+单位换算已在 `data/tencent.py` 处理，至 2026-08）
+- `universe.freeze_universe` 支持 A 股流动性池（按日均成交额 top-N，冻结无前视）
+- RL 联合训练（R4）已证明 A 股横截面对策略泛化有正贡献
 
 ## 路线图（按性价比排序，可独立落地）
 
-### R1. 小时频数据（数据量 ×24）✅ 已完成（2026-08-09）
+### C1. A 股 LGB 基线迁移到新架构（纯工程）
 
-**动机**：币安 7×24，小时频是日频 24 倍的数据红利。
+**动机**：一切 A/B 的前提。legacy qlib 版报告层有 bug、股票池写死 csi300 成分，新架构回测自算不受影响。
 
-- [x] `data/build.py` 支持 `--freq 1h`（`BinanceSource.fetch_hourly` 钩子）
-- [x] 小时 CSV 时间戳粒度修复（`candles_to_csv` 小时感知，曾把 24 根压成 1 天）
-- [x] env **frame-skip**（`decision_every`，学术 action-repetition）：日决策 + 小时观测
-- [x] policy **hold_bias**（保持先验直击 argmax 跳变——reward 惩罚管不住的部署不稳定）
-- [x] metrics 频率修正（bars_per_year 参数化 + backtest 基准按决策步重采样）
+- [ ] `config/cn-lgb-momtopk.yaml`：`market.type: cn`，top-300 流动性池（`liquidity_start/freeze_date` 参照 RL 的 A 股配置），train/valid/test ≈ 2018-2023 / 2024 / 2025-2026-08
+- [ ] 跑通 dataset → train → backtest 全链路；确认 A 股 CSV（列名/停牌日/涨跌停日）在共享日历对齐逻辑下无异常
+- [ ] backtest 基准换成指数或等权（`benchmark` 对 A 股取 SH000300，确认 cn_raw 里有指数 CSV，没有则用等权池）
+- [ ] 记录基线三件套：**IC / ICIR / TopK 净超额**，作为后续所有 A/B 的对照
 
-**结果**（test 2025-2026，9 只历史池）：
-- 纯小时决策失败：换手 873-1149×/年，收益 −87~93%（小时噪声 argmax 跳变）
-- **frame-skip + hold_bias 成功压住换手（17.9×），但收益 −28.5% 未超越日频（−18.4%）**
-- 结论：数据 ×24 红利需要**特征层配合**（日内模式特征），纯换频率不提升收益
+### C2. 截面加宽 A/B（top-50 → 300 → 800 → 2000+）
 
-### R2. 历史池扩大 + train 窗口提前 ✅ 已完成（2026-08-09）
+**动机**：横截面样本 ×N 是本路线图的主菜；且小市值票上因子通常更有效（拥挤度低）。
 
-**动机**：币安 2017 年上线，BTC/ETH 有 2017 起全历史。
+- [ ] 同一配置只改 `universe.top_n`，四档各跑一次，对比 IC / ICIR / 净超额 / 换手
+- [ ] 加流动性下限过滤（日均成交额绝对门槛），剔除不可交易小票，避免"纸面 alpha"
+- [ ] 关注两个方向的张力：截面越宽 IC 通常越高，但 TopK 落在小票上的**容量与冲击成本**越差——净超额与 IC 结论可能背离，两个都要看
+- [ ] 若 2000+ 档训练内存吃紧，dataset 层 npz 缓存分段加载
 
-- [x] train 窗口改 `2018-01-01 ~ 2023-12-31`（6 年，时序 ×1.5）
-- [x] 数据下载起点提前至 2017-01-01（BTC 全历史 2017-08 起）
-- [x] **池扩大实测不可行**：2017-12-31 冻结只剩 2 只（BTC/ETH）——币安 2017 年币种过少，当前 top50 里 2018 年前上市的仅 3 只；冻结保持 2019（9 只）
+### C3. 横截面评估报告（研究基建）
 
-**结果**（test 2025-2026）：6 年训练窗口小幅改善——超额 −2.9% → **−1.5%**（IR −0.004，几乎打平等权）、总收益 −18.4% → −16.9%、Sharpe −0.18 → −0.15。更多市场状态（2018 熊/2020-21 牛/2022 熊）提升 test 泛化。
+**动机**：宽截面 A/B 只看单个 IC 数字会误判，需要一套标准报告。
 
-### R3. 特征预训练（监督学习预热 encoder）✅ 已完成（2026-08-09，A/B 负面）
+- [ ] `lgb/backtest.py`（或独立 `lgb/report.py`）输出：per-day IC 序列 + 累计图、ICIR、分年度 IC、**decile 收益单调性**（预测分 10 档的实际收益阶梯）
+- [ ] **多空 spread**（top decile − bottom decile 日收益）：纯 alpha 度量，剥离市场 beta——A 股实盘难做空，仅作评估指标，不进交易
+- [ ] 报告落 `outputs/<config>/report.md` + png，方便跨实验对比
 
-- [x] `scripts/pretrain_encoder.py`：`(feats[t], zero tiers) → 次日收益` 回归（MSE），body 权重保存
-- [x] `train_policy(body_pretrain=...)` 加载 actor/critic 共享 body（输入维度对齐）
-- [x] 顺带修复 backtest `--ckpt` 参数（此前未生效）
+### C4. 特征截面标准化 A/B（研究）
 
-**A/B 结果**（binance 9 只池）：best valid +19%（0.293→0.348）但 test 变差（超额 −1.5% → −6.5%）——预训练特征表示钉在 train 段市场模式，拖累 test 泛化。负面，不采用。
+**动机**：当前 raw Alpha158 直接喂 LGB。树模型对单调变换不敏感，但特征的**跨日分布漂移**会让分裂点在不同市况下含义不同；per-date 截面 rank 让"排前 10%"跨时期同义。
 
-### R4. 多市场联合训练 ✅ 已完成（2026-08-09，币安侧正向）
+- [ ] dataset 层加可选 `features.cs_norm: rank|zscore|none`（per-date，对非 NaN 截面）
+- [ ] A/B vs C1 基线；预期增益温和（Alpha158 多为比率型特征），负面则记录后关闭
 
-- [x] `scripts/joint_train.py`：共享 policy 交替采集 A 股（top-9 流动性池）与币安（9 只历史池），N 统一 9、obs 维度一致、各市场独立 z-score
-- [x] 验证：联合模型各市场独立回测 vs 单市场
+### C5. 排序损失 LambdaRank（研究）
 
-**结果**（test 2025-2026）：
-- **币安：超额 −1.5% → +0.3%（首次正超额）**——A 股横截面多样性帮助加密策略
-- A 股侧被牺牲（best 选择按收益量级简单平均，币安主导；A 股 valid 持续为负）——需按市场波动归一化 best 选择才能两市场共赢
-- A 股联合模型回测需 top9 配置（N 维度一致）
+**动机**：TopK 只消费排序，MSE 优化的是回归误差——目标错配。LightGBM 原生支持 lambdarank。
 
-### R5. 数据增强 ✅ 已完成（2026-08-09，结论负面）
+- [ ] label 转每日相对收益分档（如 5 档 quantile 整数 relevance），`group` = 交易日（`date_idx` 已有，dataset 层现成）
+- [ ] `lgb.loss: lambdarank` 配置化，对比 MSE 基线的 IC / 净超额
+- [ ] 备注：lambdarank 对 top 的加权天然契合 TopK 策略，值得认真做；但 A 股单日 group 大（300~2000），训练耗时预计上升
 
-- [x] **episode 重叠采样**：已隐式存在（env 随机起点均匀覆盖 train 段，50 epoch 每位置被采 ~90 次），无需实现
-- [x] **obs 噪声增强**：实现（`env.obs_noise`，只加特征部分）+ A/B 验证
-- **A/B 结果（test 2025-2026）**：σ=0.05 时 valid 不变（0.294 vs 0.293）但 test 变差（超额 −1.5% → −4.4%）——噪声钝化特征信号，负面，不采用
+### C6. 行业中性化（需新数据）
 
-### R6. walk-forward 滚动重训 ✅ 已完成（2026-08-09，显著正向）+ 实盘工程化 ✅
+**动机**：Alpha158 的动量/波动率因子隐含行业贝塔，行业内相对强弱才是更纯的个股 alpha；组合层也避免 TopK 挤在单一行业。
 
-- [x] `scripts/walkforward.py`：6 个月 OOS 窗口 × 前 3 年重训（25 epoch），聚合 OOS 指标
-- [x] `train_policy()` 从 train.py 抽出复用
+- [ ] 行业分类数据：腾讯/akshare 申万一级行业快照，落 `data/cn_industry.csv`（当前快照近似历史，survivorship caveat 与 universe 的 membership 同款，文档记录）
+- [ ] label 行业内 z-score（替代全截面 z-score）A/B
+- [ ] 报告层加组合行业暴露统计（TopK 持仓的行业集中度）
 
-**结果**（binance 9 只池，2025H1~2026H2 四个窗口）：
-- 聚合 OOS：总收益 **+8.6%**、年化 **+3.7%**（转正）、Sharpe +0.05
-- vs 单次训练（同段 −16.9%、−7.8%/年）——改善 ~25pct，**分布漂移确为主矛盾**
-- caveat：z-score 用原 train 段拟合（特征层轻微泄漏），严格版需每窗口重建特征
-- **实盘工程化**：`scripts/retrain_live.py`（cron 每季度）+ 原子模型替换（checkpoint 写 .tmp → os.replace）+ 重训历史 `retrain_history.json`；live 每次运行加载最新模型，无需重启 server
+### C7. 反哺 crypto LGB（可选，搭车）
+
+- [ ] C4/C5 中验证为正向的改动应用到 `binance-lgb-momtopk`（48 币池截面小是其短板，排序损失可能同样受益）
 
 ## 实施顺序建议
 
 ```
-R1（小时频，纯工程）→ R2（池扩大，纯工程）→ 两者组合复测基线
-→ R3（特征预训练，研究）→ R4/R5/R6（按兴趣与时间取舍）
+C1（基线迁移，工程）→ C2 + C3 一起做（宽截面 A/B 需要评估报告才能判断）
+→ C4 / C5（研究，可并行，各自独立 A/B）→ C6（需新数据源）→ C7（搭车）
 ```
 
-R1+R2 完成后重新评估（数据量 24×3=72 倍量级），若仍有明显短板再上 R3。
+C2+C3 完成后重新评估：若宽截面 IC 显著提升但净超额不动，优先查交易容量/成本假设，再决定是否继续 C4-C6。
 
 ## 环境/代码备忘
 
-- `BinanceSource.fetch_hourly` 钩子仍在 `orange_quant/data/sources.py`（阶段研究模块已删，钩子未删）
-- 小时频 episode：`env.horizon` 与日频共用配置，语义按频率解释
-- 加密日历无休市（7×24），小时频 split 边界用时间戳而非日期
-- 所有改动沿 `config/*.yaml` 参数化，市场无关核心不动
+- **cwd 遮蔽坑**：一律 `cd orange-quant/` 后运行（workspace 根的 `qlib/` 目录会遮蔽 pyqlib 包）
+- 新架构入口：`../.venv/bin/python -m orange_quant.lgb.{dataset,train,backtest} <config>`
+- A 股原始数据更新：`oq-download-data` skill（腾讯 K 线，断点续跑）；单位换算在 `orange_quant/data/tencent.py`（volume 手→股、amount 万元→元，STAR/指数例外已处理）
+- legacy A 股基线参照：git tag `legacy-pre-rl-refactor` 的 `config/csi300-lgb-momtopk.yaml`
+- qlib dev 版 PortAnaRecord 报告不可信（`backtest()` 返回结构变更）；新架构 backtest 自算指标，不受影响
+- label 语义沿用 `close[t+2]/close[t+1]-1`（qlib Alpha158 默认，T+1 可执行）；A 股注意停牌日 NaN label 已被 drop、涨停买不进属于回测乐观偏差（C2 容量讨论时一并评估）
