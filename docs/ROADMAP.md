@@ -43,8 +43,8 @@
 
 **动机**：当前 raw Alpha158 直接喂 LGB。树模型对单调变换不敏感，但特征的**跨日分布漂移**会让分裂点在不同市况下含义不同；per-date 截面 rank 让"排前 10%"跨时期同义。
 
-- [ ] dataset 层加可选 `features.cs_norm: rank|zscore|none`（per-date，对非 NaN 截面）
-- [ ] A/B vs C1 基线；预期增益温和（Alpha158 多为比率型特征），负面则记录后关闭
+- [x] dataset 层加可选 `features.cs_norm: rank|zscore|none`（per-date，对非 NaN 截面）—— 已实现（PR #24），默认 none 保持 legacy 原始 Alpha158 字节不变
+- [x] A/B vs C1 基线；预期增益温和（Alpha158 多为比率型特征），负面则记录后关闭 —— **zscore 温和正向，保留为可选**：IC 0.0453→0.0513、ICIR 0.255→0.295、decile spread t 3.62→5.04、净超额 +23.8%→+24.9%；**rank 记录后不启用**（ICIR 0.274 微升但净超额掉到 +13.3%，组合层噪声，与 C2 top-800 同款背离）；默认仍 none（一次只改一个变量）
 
 ### C5. 排序损失 LambdaRank（研究）
 
