@@ -54,7 +54,12 @@ class RotationDataset:
 
 
 def load_config(config_name: str) -> dict:
-    with open(f"config/{config_name}.yaml", "r") as f:
+    # generated A/B configs live in config/generated/ (gitignored) and are
+    # addressed by the same bare name as top-level ones
+    p = Path(f"config/{config_name}.yaml")
+    if not p.exists():
+        p = Path(f"config/generated/{config_name}.yaml")
+    with open(p, "r") as f:
         return yaml.safe_load(f)
 
 
@@ -121,7 +126,8 @@ def load_bars_and_calendar(config: dict, log_prefix: str):
     codes = freeze(uni["raw_dir"], uni["top_n"], uni["freeze_date"],
                    uni["liquidity_start"],
                    membership=uni.get("membership"),
-                   min_history_days=uni.get("min_history_days", 250))
+                   min_history_days=uni.get("min_history_days", 250),
+                   min_amount=uni.get("min_amount", 0.0))
     print(f"[{log_prefix}] frozen universe: {len(codes)} names, "
           f"freeze_date={uni['freeze_date']}")
 

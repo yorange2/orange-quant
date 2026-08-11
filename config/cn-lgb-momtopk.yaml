@@ -33,6 +33,7 @@ universe:
     liquidity_start: "2017-01-01" # 流动性窗口：冻结日前整年
     top_n: 300                    # 日均成交额 top-300（≈ legacy csi300 池大小）
     min_history_days: 200         # 2017 窗口 ~243 交易日，需低于窗长
+    min_amount: 50000000          # 流动性下限：日均成交额 ≥ 5000 万元（剔除不可交易小票）
 
 features:
     warmup_start: "2017-07-01"    # ≥60 bars before train start (max rolling window 60)
