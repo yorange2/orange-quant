@@ -82,28 +82,39 @@ def _cs_normalize(feats: np.ndarray, mode: str) -> np.ndarray:
     return out
 
 
-def _label_cs_zscore(label: np.ndarray) -> np.ndarray:
+def _label_cs_zscore(label: np.ndarray, groups: list | None = None) -> np.ndarray:
     """Per-date cross-sectional z-score over non-NaN entries (ddof=1).
 
     Matches qlib CSZScoreNorm applied after DropnaLabel: each day's mean/std
-    are computed over the coins with a valid label that day only.
+    are computed over the coins with a valid label that day only. With
+    ``groups`` (one industry name or None per column, roadmap C6), the z-score
+    runs WITHIN each industry — ``None`` columns are excluded (delisted /
+    unmapped names get NaN labels, dropped at train time).
     """
     # Deliberately a per-date loop, not a vectorized nanmean/nanstd: the
     # vectorized form sums in a different order and shifts the stored float32
     # labels by ~1e-6, which would make every cached features.npz irreproducible
     # for no real gain (this runs once per dataset build).
     out = np.full_like(label, np.nan, dtype=np.float64)
+    per_date_cols = groups is None
     for t in range(label.shape[0]):
         row = label[t]
         valid = ~np.isnan(row)
-        n = int(valid.sum())
-        if n < 2:
-            continue  # pandas std of < 2 → NaN → all NaN that day
-        mean = row[valid].mean()
-        std = row[valid].std(ddof=1)
-        if std <= 0:
-            continue  # constant cross-section → division by zero
-        out[t, valid] = (row[valid] - mean) / std
+        if per_date_cols:
+            cols = [np.flatnonzero(valid)]
+        else:
+            cols = [np.flatnonzero(valid & (np.asarray(groups) == g))
+                    for g in dict.fromkeys(g for g in groups if g is not None)]
+        for col in cols:
+            n = len(col)
+            if n < 2:
+                continue  # pandas std of < 2 → NaN → all NaN that day
+            vals = row[col]
+            mean = vals.mean()
+            std = vals.std(ddof=1)
+            if std <= 0:
+                continue  # constant cross-section → division by zero
+            out[t, col] = (vals - mean) / std
     return out.astype(np.float32)
 
 
@@ -145,7 +156,15 @@ def build_dataset(config: dict) -> LGBDataset:
     else:
         raise ValueError(f"features.cs_norm must be rank|zscore|none, got {cs_norm!r}")
 
-    label = _label_cs_zscore(label)
+    ind_groups = None
+    if config.get("label", {}).get("industry_neutral"):
+        from orange_quant.data.industry import load_industry_map
+
+        ind = load_industry_map()
+        ind_groups = [ind.get(c) for c in codes]      # None → dropped at train
+        n_covered = sum(g is not None for g in ind_groups)
+        print(f"[lgb-data] industry-neutral label: {n_covered}/{len(codes)} covered")
+    label = _label_cs_zscore(label, ind_groups)
 
     split_idx = {
         "train": segment_idx(cal, train_s, train_e),

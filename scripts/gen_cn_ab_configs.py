@@ -63,6 +63,11 @@ def main() -> None:
     for key in ("model_dir", "output_dir", "cache_dir"):
         cfg["paths"][key] = f"{cfg['paths'][key]}-lambdarank"
     _write(cfg, f"{stem}-lambdarank", out)
+    cfg = copy.deepcopy(base)
+    cfg["label"] = {"industry_neutral": True}     # roadmap C6: within-industry label z-score
+    for key in ("model_dir", "output_dir", "cache_dir"):
+        cfg["paths"][key] = f"{cfg['paths'][key]}-indneutral"
+    _write(cfg, f"{stem}-indneutral", out)
 
 
 if __name__ == "__main__":
