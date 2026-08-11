@@ -64,7 +64,7 @@
 
 ### C7. 反哺 crypto LGB（可选，搭车）
 
-- [ ] C4/C5 中验证为正向的改动应用到 `binance-lgb-momtopk`（48 币池截面小是其短板，排序损失可能同样受益）
+- [x] C4/C5 中验证为正向的改动应用到 `binance-lgb-momtopk`（48 币池截面小是其短板，排序损失可能同样受益）—— C4/C5 唯一正向改动是 `cs_norm: zscore`，已应用到 binance 变体 A/B：**纯 alpha 度量全面退步**（test IC 0.0433→0.0241、ICIR 0.188→0.092、decile t 0.71→0.13 无显著性），仅组合路径净超额 +11.2%→+22.0%——再次印证净超额与 IC 背离，且 alpha 层无证据支撑，**判定不采用**（lambdarank 为负未反哺；crypto 基线维持 raw Alpha158）
 
 ## 实施顺序建议
 
