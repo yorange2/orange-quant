@@ -46,12 +46,15 @@ def freeze_universe(
     liquidity_start: str,
     membership: Optional[str] = None,
     min_history_days: int = 250,
+    min_amount: float = 0.0,
 ) -> List[str]:
     """Top-N by mean daily liquidity in [liquidity_start, freeze_date].
 
     Liquidity proxy: mean(amount) if the CSV has an amount column, else
     mean(volume × close). Stocks/coins must have ≥ min_history_days of data in
-    the window (survivorship of actively traded names only).
+    the window (survivorship of actively traded names only). ``min_amount``
+    (in quote units — 元 for cn) is a hard floor on mean daily amount that
+    filters out untradable small caps regardless of rank (roadmap C2).
     """
     raw = Path(raw_dir)
     freeze = pd.Timestamp(freeze_date)
@@ -76,7 +79,7 @@ def freeze_universe(
             lq = w["amount"].mean()
         else:
             lq = float((w["volume"] * w["close"]).mean())
-        if lq and lq > 0:
+        if lq and lq > 0 and lq >= min_amount:
             liq[sym] = float(lq)
 
     if membership:
