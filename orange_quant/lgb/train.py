@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 import numpy as np
+import pandas as pd
 import lightgbm as lgb
 
 from orange_quant.lgb.dataset import LGBDataset, load_or_build, load_config
@@ -41,6 +42,30 @@ def _segment_rows(ds: LGBDataset, segment: str) -> Tuple[np.ndarray, np.ndarray,
     return X, y, date_idx, code_idx
 
 
+def _group_counts(date_idx: np.ndarray) -> np.ndarray:
+    """Per-decision-day row counts, only for dates that actually appear
+    (np.bincount would emit 0-size groups for empty dates — LightGBM rejects
+    those)."""
+    _, counts = np.unique(date_idx, return_counts=True)
+    return counts.astype(np.int32)
+
+
+def _relevance_labels(y: np.ndarray, date_idx: np.ndarray,
+                      n_buckets: int = 5) -> np.ndarray:
+    """Per-date quantile buckets 0..n_buckets-1 of the label (roadmap C5).
+
+    The stored label is a per-date z-score, a monotonic per-date transform of
+    the raw 1d-forward return, so its quantiles ARE the raw-return quantiles.
+    LightGBM's lambdarank uses exponential gain 2^label − 1 → top-heavy
+    weighting, aligned with the TopK strategy. group = one query per date.
+    """
+    rel = np.zeros(len(y), dtype=np.int32)
+    for t in np.unique(date_idx):
+        m = date_idx == t
+        rel[m] = pd.qcut(y[m], n_buckets, labels=False, duplicates="drop")
+    return rel
+
+
 def train_model(config: dict, ds: LGBDataset, num_boost_round: int | None = None,
                 quiet: bool = False) -> Tuple[EnsembleLGB, Dict]:
     """Fit the seed-bagged ensemble; returns (model, metrics)."""
@@ -50,14 +75,15 @@ def train_model(config: dict, ds: LGBDataset, num_boost_round: int | None = None
     es_rounds = int(lgb_cfg["early_stopping_rounds"])
     base_seed = int(lgb_cfg.get("seed", 42))
 
-    X_tr, y_tr, _, _ = _segment_rows(ds, "train")
+    X_tr, y_tr, tr_date, _ = _segment_rows(ds, "train")
     X_va, y_va, va_date, _ = _segment_rows(ds, "valid")
     print(f"[lgb-train] rows: train={len(y_tr)}, valid={len(y_va)}")
     if len(y_tr) < 1000 or len(y_va) < 100:
         raise RuntimeError(f"too few training rows ({len(y_tr)}/{len(y_va)})")
 
+    loss = lgb_cfg.get("loss", "mse")
     params = {
-        "objective": lgb_cfg.get("loss", "mse"),
+        "objective": loss,
         "learning_rate": float(lgb_cfg["learning_rate"]),
         "num_leaves": int(lgb_cfg["num_leaves"]),
         "feature_fraction": float(lgb_cfg["feature_fraction"]),
@@ -70,10 +96,25 @@ def train_model(config: dict, ds: LGBDataset, num_boost_round: int | None = None
         "num_threads": os.cpu_count() or 4,
     }
 
-    dtrain = lgb.Dataset(X_tr, label=y_tr)
-    dvalid = lgb.Dataset(X_va, label=y_va, reference=dtrain)
+    metric_key = "rmse"
+    if loss == "lambdarank":
+        # relevance = per-date 5-bucket quantile of the (z-scored) label,
+        # group = one query per decision day; eval at the given NDCG cutoff
+        ndcg_at = int(lgb_cfg.get("ndcg_eval_at", 10))
+        params["ndcg_eval_at"] = [ndcg_at]
+        metric_key = f"ndcg@{ndcg_at}"
+        y_tr_rel = _relevance_labels(y_tr, tr_date)
+        y_va_rel = _relevance_labels(y_va, va_date)
+        dtrain = lgb.Dataset(X_tr, label=y_tr_rel, group=_group_counts(tr_date))
+        dvalid = lgb.Dataset(X_va, label=y_va_rel,
+                             group=_group_counts(va_date), reference=dtrain)
+        print(f"[lgb-train] objective=lambdarank, relevance 5 buckets/date, "
+              f"groups train={len(np.unique(tr_date))} valid={len(np.unique(va_date))}")
+    else:
+        dtrain = lgb.Dataset(X_tr, label=y_tr)
+        dvalid = lgb.Dataset(X_va, label=y_va, reference=dtrain)
 
-    boosters, best_iters, valid_rmses = [], [], []
+    boosters, best_iters, valid_scores = [], [], []
     for i in range(n_seeds):
         p = dict(params, seed=base_seed + i)
         callbacks = [lgb.early_stopping(es_rounds, verbose=not quiet)]
@@ -87,26 +128,37 @@ def train_model(config: dict, ds: LGBDataset, num_boost_round: int | None = None
         boosters.append(bst)
         best_iters.append(bst.best_iteration)
         score = bst.best_score["valid"]
-        valid_rmses.append(float(score.get("rmse", score.get("l2", float("nan")))))
+        valid_scores.append(float(score.get(metric_key,
+                                            score.get("l2", float("nan")))))
 
     model = EnsembleLGB(boosters)
 
-    # valid IC / Rank IC: per-date correlation vs the label, mean over dates
+    # valid IC / Rank IC: per-date correlation vs the ORIGINAL z-scored label
+    # (bucketed relevance is only the training signal), so lambdarank and MSE
+    # runs share one IC definition
     pred_va = model.predict(X_va)
     ic = per_date_corr(pred_va, y_va, va_date, "pearson")
     ric = per_date_corr(pred_va, y_va, va_date, "spearman")
     metrics = {
-        "valid_rmse": float(np.mean(valid_rmses)),
-        "valid_rmse_per_seed": valid_rmses,
-        "best_iteration_per_seed": best_iters,
         "valid_ic": float(ic.mean()) if len(ic) else float("nan"),
         "valid_rank_ic": float(ric.mean()) if len(ric) else float("nan"),
+        "best_iteration_per_seed": best_iters,
         "n_train_rows": int(len(y_tr)),
         "n_seeds": n_seeds,
+        "loss": loss,
     }
-    print(f"[lgb-train] valid RMSE={metrics['valid_rmse']:.5f} "
-          f"IC={metrics['valid_ic']:.4f} RankIC={metrics['valid_rank_ic']:.4f} "
-          f"(best iters {best_iters})")
+    if loss == "lambdarank":
+        metrics["valid_ndcg"] = float(np.mean(valid_scores))
+        metrics["valid_ndcg_per_seed"] = valid_scores
+        print(f"[lgb-train] valid NDCG@{ndcg_at}={metrics['valid_ndcg']:.5f} "
+              f"IC={metrics['valid_ic']:.4f} RankIC={metrics['valid_rank_ic']:.4f} "
+              f"(best iters {best_iters})")
+    else:
+        metrics["valid_rmse"] = float(np.mean(valid_scores))
+        metrics["valid_rmse_per_seed"] = valid_scores
+        print(f"[lgb-train] valid RMSE={metrics['valid_rmse']:.5f} "
+              f"IC={metrics['valid_ic']:.4f} RankIC={metrics['valid_rank_ic']:.4f} "
+              f"(best iters {best_iters})")
     return model, metrics
 
 
@@ -152,7 +204,8 @@ def main() -> None:
                     "universe_top_n": cfg["universe"]["top_n"],
                     "n_features": ds.n_feats},
             metrics={k: metrics[k] for k in
-                     ("valid_rmse", "valid_ic", "valid_rank_ic")},
+                     ("valid_rmse", "valid_ndcg", "valid_ic", "valid_rank_ic")
+                     if k in metrics},
             artifacts=[Path(cfg["paths"]["model_dir"]) / "model.pkl"],
             tag="lgb-train",
         )
