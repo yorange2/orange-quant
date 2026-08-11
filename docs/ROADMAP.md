@@ -58,9 +58,9 @@
 
 **动机**：Alpha158 的动量/波动率因子隐含行业贝塔，行业内相对强弱才是更纯的个股 alpha；组合层也避免 TopK 挤在单一行业。
 
-- [ ] 行业分类数据：腾讯/akshare 申万一级行业快照，落 `data/cn_industry.csv`（当前快照近似历史，survivorship caveat 与 universe 的 membership 同款，文档记录）
-- [ ] label 行业内 z-score（替代全截面 z-score）A/B
-- [ ] 报告层加组合行业暴露统计（TopK 持仓的行业集中度）
+- [x] 行业分类数据：腾讯/akshare 申万一级行业快照，落 `data/cn_industry.csv`（当前快照近似历史，survivorship caveat 与 universe 的 membership 同款，文档记录）—— `scripts/fetch_cn_industry.py`（PR #26）：akshare 申万官网接口（东财/新浪/历史分类 SSL 均被限），5202 只 × 31 行业；top-300 池覆盖 291/300（未覆盖为退市/吸收合并）
+- [x] label 行业内 z-score（替代全截面 z-score）A/B —— **排序度量大幅提升但净超额崩掉**：valid IC 0.0257→0.0439、RankICIR 0.101→0.381，但净超额 +23.8%→**−9.4%**、decile t 3.62→1.62——全截面模型隐含行业动量轮动（基线 TopK 有色 15.6%/计算机 9.4%），2025-26 该部分贡献主要收益；行业内 alpha 更稳但量级小；且 label 中性化不动特征层原始水平（indneutral TopK 漂到防御银行 22.8%）。**记录，不采用**；彻底中性化需特征层处理（超出本路线图）
+- [x] 报告层加组合行业暴露统计（TopK 持仓的行业集中度）—— report.md 新增行业暴露段（日均权重/top-3/HHI），backtest 输出 positions.csv；无行业映射（crypto）时自动跳过
 
 ### C7. 反哺 crypto LGB（可选，搭车）
 
