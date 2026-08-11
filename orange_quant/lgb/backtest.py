@@ -70,8 +70,10 @@ def compute_ic(pred: np.ndarray, label: np.ndarray, t0: int, t1: int) -> Dict[st
     return {
         "ic_mean": float(ics.mean()) if len(ics) else float("nan"),
         "ic_std": float(ics.std()) if len(ics) else float("nan"),
+        "icir": float(ics.mean() / ics.std()) if len(ics) > 2 and ics.std() > 0 else float("nan"),
         "rank_ic_mean": float(rics.mean()) if len(rics) else float("nan"),
         "rank_ic_std": float(rics.std()) if len(rics) else float("nan"),
+        "rank_icir": float(rics.mean() / rics.std()) if len(rics) > 2 and rics.std() > 0 else float("nan"),
         "n_ic_days": int(len(ics)),
     }
 
@@ -226,6 +228,10 @@ def main() -> None:
               f"({dates[0].astype('datetime64[D]')} ~ "
               f"{dates[len(rl) - 1].astype('datetime64[D]')})",
               out_dir / "nav.png")
+
+    from orange_quant.lgb.report import generate_report
+
+    generate_report(cfg, ds, preds, out_dir)
     print(f"\n[lgb-backtest] outputs → {out_dir}/")
     print("[lgb-backtest] done")
 
