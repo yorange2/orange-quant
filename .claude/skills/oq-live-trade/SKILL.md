@@ -32,7 +32,8 @@ python -m orange_quant.server --config binance-rl-rotation --once
 ```bash
 docker compose --profile binance-live up -d       # daily at 00:15 UTC
 docker compose --profile hl-live up -d
-docker compose --profile binance-once up          # one-shot dry run
+docker compose --profile binance-once up          # one-shot dry run (Binance)
+docker compose --profile hl-once up               # one-shot dry run (Hyperliquid)
 ```
 
 ## Checks
