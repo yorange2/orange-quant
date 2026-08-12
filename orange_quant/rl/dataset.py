@@ -90,8 +90,15 @@ def bar_reader(config: dict) -> Callable[[str], Optional[pd.DataFrame]]:
     crypto CSVs (pipeline.candles_to_csv) have date,open,close,high,low,volume.
     The reader returns a DataFrame indexed by date (datetime64), or None when the
     symbol has no file / is unparseable.
+
+    With ``data.hour_of_day: H`` (0-23, UTC — binance hourly bars), only the
+    bars of that hour survive, so the series becomes a fixed-clock daily
+    series: the label (close[t+2]/close[t+1]−1) is then the same-hour
+    next-day return, and rolling features span days at that hour. Used by the
+    24-hour-of-day A/B (one dataset per hour).
     """
     raw_dir = Path(config["data"]["raw_dir"])
+    hour = config.get("data", {}).get("hour_of_day")
 
     def _read(symbol: str) -> Optional[pd.DataFrame]:
         p = raw_dir / f"{symbol}.csv"
@@ -103,6 +110,10 @@ def bar_reader(config: dict) -> Callable[[str], Optional[pd.DataFrame]]:
             return None
         if df.empty:
             return None
+        if hour is not None:
+            df = df[df.index.hour == hour]
+            if df.empty:
+                return None
         # both layouts carry the same columns in a different order; select the
         # canonical subset (a file missing any of them is treated as unusable)
         keep = ["open", "high", "low", "close", "volume"]
