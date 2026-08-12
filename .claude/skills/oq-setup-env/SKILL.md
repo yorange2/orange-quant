@@ -7,9 +7,11 @@ description: Configure the orange-quant environment — venv, tianshou/gym pinni
 
 ## Python environment
 
+共享 venv 在 **workspace 根目录** `.venv/`（Python 3.12，homebrew）——orange-quant/ 内不自建：
+
 ```bash
 cd orange-quant
-python3 -m venv .venv && source .venv/bin/activate
+source ../.venv/bin/activate
 pip install -e .          # pyproject deps: tianshou/gym==0.26.2/torch/ccxt/akshare/mlflow/...
 ```
 
@@ -22,7 +24,7 @@ pip install -e .          # pyproject deps: tianshou/gym==0.26.2/torch/ccxt/aksh
    to gymnasium (numpy deprecation warnings are noise).
 3. **mlflow file store** is blocked by default in 3.x: set
    `MLFLOW_ALLOW_FILE_STORE=true` (train.py already setdefaults it; Docker sets it).
-4. **cwd**: always run from the `orange-quant/` directory.
+4. **cwd**: always run from the `orange-quant/` directory（workspace 根的 `qlib/` 文件夹会遮蔽已安装的 pyqlib，见 CLAUDE.md 坑 1）。
 
 ## API keys (.env, gitignored)
 
@@ -36,5 +38,5 @@ HYPERLIQUID_PRIVATE_KEY=...
 ## Sanity check
 
 ```bash
-python -m orange_quant.rl.smoke_test    # tianshou × gym × torch × numpy compat + PPO flow
+../.venv/bin/python -m orange_quant.rl.smoke_test    # tianshou × gym × torch × numpy compat + PPO flow
 ```

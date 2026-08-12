@@ -31,7 +31,10 @@ amount in CNY. **Pagination is end-anchored** — never request with year loops.
 ```bash
 python -m orange_quant.data.build --exchange binance --top 20 --start 2019-07-01
 python -m orange_quant.data.build --exchange hyperliquid --top 20 --start 2019-07-01
+# 钟点数据（供 binance-lgb-momtopk-h0x A/B 与 binance-h1-rl-rotation 使用）
+python -m orange_quant.data.build --exchange binance --top 20 --freq 1h
 ```
 
 Output: `data/binance_raw/{COIN}.csv` / `data/hyperliquid_raw/...` with
-`date,open,close,high,low,volume`. Incremental: rerunning only fetches new days.
+`date,open,close,high,low,volume`; `--freq 1h` → `data/binance_h1_raw/`.
+Incremental: rerunning only fetches new days.

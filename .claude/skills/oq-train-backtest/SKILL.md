@@ -18,11 +18,12 @@ Train the MultiDiscrete PPO policy and backtest it on the test segment.
 | `csi300-rl-rotation` | A-share (Tencent) | top-50 frozen 2012 | research only |
 | `binance-rl-rotation` | Binance spot | top-20 | research + live |
 | `hyperliquid-rl-rotation` | Hyperliquid spot | top-20 | research + live |
+| `binance-h1-rl-rotation` | Binance spot h1 | top-20 | research + live |
 
 ## Running
 
 ```bash
-cd orange-quant && source .venv/bin/activate
+cd orange-quant && source ../.venv/bin/activate
 
 # 1. build the dataset (npz cache; --force to rebuild)
 python -m orange_quant.rl.dataset csi300-rl-rotation
