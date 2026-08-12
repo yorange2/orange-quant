@@ -109,6 +109,16 @@ label = 隔日同钟点收益），各自独立 dataset→train→backtest（PR 
 - 复现：`scripts/gen_binance_hour_ab.py` + 24 条 dataset/train/backtest；
   分析：`scripts/hour_of_day_stability.py`。
 
+## 研究记录：24 钟点 ensemble（2026-08-12，用户需求）
+
+既然"哪个钟点更强"不可判定，正确落地是不择优、**24 个钟点一起给分、按日聚合后决定买卖**。分数层 ensemble（`orange_quant/lgb/ensemble.py::HourEnsemble`）：每个钟点模型在自己的钟点锚定序列上出分 → per-date 截面 z-score → 24 个钟点取均值（全窗 24/24 都在场时与求和排序等价）。基建：`scripts/gen_binance_hour_ensemble.py` 生成 config + 无训练 model.pkl（`binance-lgb-momtopk-hour-ensemble`，参考数据集=h00 缓存，执行价取午夜锚定日线）。
+
+- **对齐事实**：24 钟点日历在 180 个决策日内逐日一致（差异只在 2019 warmup 与 h00 独有的 2026-08-01 标记日），成分 48 币一致；跨钟点预测相关均值仅 **0.58**（min −0.46）→ 降噪空间大；
+- **alpha 层（test 2026-02~07，180 天）**：IC 0.0473（≈ h00 0.0488，弱于 h23 0.0603）、**RankIC 0.0724 为 25 配置第一**（h00 0.0522，+39%）、RankICIR 0.359 第一、ICIR 0.191（低于 h00 0.224，但 h00 由 sw3 单段 0.430 撑起，ensemble 三窗 0.287/0.218/0.068 均衡）；**IC 三子窗全正**（+0.069/+0.055/+0.018），sw2 是 25 配置的 IC winner（多数钟点 sw2 弱/负，h00 −0.017）；
+- **组合层**：超额三窗全正（+43%/+29%/+123%），年化 +60.2%，bootstrap CI [−18.6%, +116%]；全窗最佳钟点 h12（+218.9%）仅 1/3 子窗保持最佳——择优不可靠再次确认；
+- **短板（照实）**：decile spread t=0.25（h00 2.46）——共识把极端尾部磨钝：ensemble 底部十分位是"共识烂票"（24 钟点平均 z −1.3σ，但单钟点原始分 ≈0），收益空间里分不开多空腿；rank-mean 变体 t 修到 0.93 但 IC 掉到 0.031，**不采用变体**；
+- **判级：采用**为 24 钟点实验的正确落地（"普遍弱正"升级为结构可用：IC 3/3 + RankIC 每窗 top）；对 long-only topk 策略短腿不交易，spread 弱影响有限；组合层超额与 h00 在噪声内（CI 大量重叠），不作"更好"claim。
+
 ## 稳定性复检（2026-08-12，`scripts/backtest_stability.py`）
 
 对 C2/C4/C6 的 A/B 补做子窗口滚动验证（test 拆 3 段 × IC/ICIR/RankIC/超额 + block-bootstrap CI），结论分级：
