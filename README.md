@@ -11,8 +11,16 @@ orange_quant/
 │   ├── tencent.py          # A-share daily bars from the Tencent K-line API
 │   │                       #   (end-anchored pagination → data/cn_raw/*.csv)
 │   ├── universe.py         # liquidity-frozen universe (cn + crypto, zero extra API)
+│   ├── industry.py         # SW level-1 industry map (data/cn_industry.csv)
 │   ├── sources.py          # Binance (REST) / Hyperliquid (ccxt) fetch hooks
 │   └── pipeline.py         # incremental crypto download loop (CSV resumable)
+├── lgb/                    # market-agnostic LightGBM core (cross-sectional alpha)
+│   ├── dataset.py          # bars → Alpha158 (158 feats) → npz cache; cs_norm,
+│   │                       #   industry-neutral label, hour_of_day knobs
+│   ├── features.py         # qlib Alpha158 ported to pandas (0 mismatches vs qlib)
+│   ├── train.py            # seed-bagged ensemble; mse | lambdarank objectives
+│   ├── backtest.py         # TopkDropout portfolio, suspension-safe (ffill valuation)
+│   └── report.py           # cross-sectional report: IC/ICIR, deciles, long-short
 ├── rl/                     # market-agnostic RL core (the research engine)
 │   ├── dataset.py          # bars → 10 OHLCV factors → npz cache (z-score fit on train)
 │   ├── env.py              # RotationEnv: obs = features + current tiers,
@@ -30,9 +38,11 @@ orange_quant/
 ├── server.py               # daily cron loop (--config/--once/--dry-run, heartbeat)
 ├── blacklist.py / healthcheck.py
 └── config/                 # one yaml per market
-    ├── csi300-rl-rotation.yaml       # A-share research
-    ├── binance-rl-rotation.yaml      # Binance live + research
-    └── hyperliquid-rl-rotation.yaml  # Hyperliquid live + research
+    ├── csi300-rl-rotation.yaml       # A-share research (RL)
+    ├── binance-rl-rotation.yaml      # Binance live + research (RL)
+    ├── hyperliquid-rl-rotation.yaml  # Hyperliquid live + research (RL)
+    ├── binance-lgb-momtopk.yaml      # Binance live + research (LGB)
+    └── cn-lgb-momtopk.yaml           # A-share research (LGB, top-300 liquidity pool)
 ```
 
 Market differences live only in the data layer (source/universe/benchmark) and
@@ -90,6 +100,44 @@ Features are the full 158-feature qlib Alpha158 set, ported to pandas
 (`signal day t → rebalance at close[t+1] → earn [t+1,t+2]`); live does full
 daily rotation to top-k on the signal day (legacy deviation).
 
+### A-share LGB momentum top-k (research)
+
+The legacy qlib `csi300-lgb-momtopk` pipeline ported to the new architecture
+(top-300 liquidity pool frozen 2017-12-31 instead of hardcoded constituents,
+benchmark SH000300 from the local Tencent CSVs):
+
+```bash
+../.venv/bin/python -m orange_quant.lgb.dataset  cn-lgb-momtopk
+../.venv/bin/python -m orange_quant.lgb.train     cn-lgb-momtopk
+../.venv/bin/python -m orange_quant.lgb.backtest  cn-lgb-momtopk
+# outputs/ + report.md / report_ic.png / report_deciles.png / positions.csv
+```
+
+A-share specifics handled: suspended holdings are valued at the last known
+close (ffill) while trading still requires a real bar; `universe.min_amount`
+(5000万) filters untradable small caps.
+
+## Cross-sectional research toolkit (A/B)
+
+The lgb pipeline is market-agnostic; every knob below is config-driven, and
+generated variant configs live in `config/generated/` (gitignored, addressed
+by the same bare name via `load_config` fallback):
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/gen_cn_ab_configs.py` | width tiers (`top50/300/800/2000`) + `cs_norm` variants + lambdarank + industry-neutral |
+| `scripts/gen_binance_hour_ab.py` | 24 hour-of-day datasets (`data.hour_of_day`, one per UTC hour) |
+| `scripts/fetch_cn_industry.py` | SW level-1 industry snapshot → `data/cn_industry.csv` (survivorship caveat) |
+| `scripts/backtest_stability.py` | **generic stability check** for any config(s): sub-window IC/ICIR/RankIC/excess + block-bootstrap CI + cross-config ranking stability |
+| `scripts/hour_of_day_stability.py` | the same machinery for the 24-hour experiment |
+
+A/B discipline observed across all experiments (see ROADMAP for the full
+record): one config knob at a time; report **both** the pure-alpha layer
+(IC/ICIR, decile spread — from `report.py`) and the portfolio layer (net
+excess, turnover) because they repeatedly diverge; validate the winner with
+`backtest_stability.py` before adopting — full-window winners that do not
+reproduce across sub-windows are regime noise.
+
 ## Experiment results
 
 | Market | Universe | Period | Annual ret (net) | Sharpe | vs benchmark |
@@ -97,6 +145,30 @@ daily rotation to top-k on the signal day (legacy deviation).
 | A-share RL rotation | top-50 liquid (frozen 2012) | test 2023–2026 | −5.0% | −0.31 | equal-weight +3.0%/yr |
 | Binance RL rotation | top-20 (frozen 2026) | test 2025–2026 | +70.9% | 0.55 | BTC +50.2%/yr (3-epoch smoke) |
 | Binance LGB momtopk | top-50 (frozen 2026-08) | test 2026-02–08 | −8.2% (BTC −17.1%) | IC 0.043 | excess +11.2%/yr, IR 0.26 |
+| A-share LGB momtopk | top-300 liquid (frozen 2017-12) | test 2025–2026 | +37.8% (SH000300 +14.0%) | 1.68 | excess +23.8%/yr, IC 0.045, ICIR 0.255 |
+
+LGB A/B highlights (test 2025–2026, A-share top-300 pool; full record +
+stability verdicts in ROADMAP):
+- **Universe width** (C2): IC rises strictly with width — top-50 0.0001 → top-2000
+  0.0570, ICIR 0.00 → 0.59. Net excess diverges from IC (top-800: IC up, excess
+  down); top-2000's excess edge (+46%) is carried by one 60-day stretch
+  (stability check: IC positive in all windows, excess wins 1/3 windows).
+  top-300 is the most consistent portfolio performer (excess positive in all
+  3 sub-windows).
+- **`features.cs_norm: zscore`** (C4): IC above baseline in 3/3 sub-windows
+  (0.065/0.041/0.048 vs 0.064/0.031/0.041), ICIR 0.255 → 0.296 — a stable,
+  mild alpha-layer win; recommended as the default base for future A/Bs.
+  `rank` not adopted (net excess collapses). 
+- **lambdarank** (C5): decisively negative (RankIC −0.026 on test) — recorded,
+  infrastructure kept.
+- **Industry-neutral label** (C6): RankICIR 0.10 → 0.38 (stable across
+  windows) but net excess collapses to −9.4%/yr (negative in 2/3 windows) —
+  the whole-cross-section model implicitly times industry momentum, which was
+  most of the return; not adopted.
+- **Hour-of-day** (24 datasets, one per UTC hour): every hour carries positive
+  test IC (0.013–0.060) — no clock hour is dead; hour-to-hour differences are
+  noise (rankings unstable across sub-windows, best hour +175% ≈ expected
+  max of 24 noise draws); the robust claim is "every hour weakly beats BTC".
 
 Data-quality note: the new Tencent-only dataset fixes the legacy store's
 2022-01~2022-05 data hole (4.5 months of zeros) and uses hfq (correct

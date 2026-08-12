@@ -75,6 +75,40 @@ C1（基线迁移，工程）→ C2 + C3 一起做（宽截面 A/B 需要评估�
 
 C2+C3 完成后重新评估：若宽截面 IC 显著提升但净超额不动，优先查交易容量/成本假设，再决定是否继续 C4-C6。
 
+## 完成状态（2026-08-12）
+
+C1–C7 全部落地（PR #21–#26），20/20 勾选。验收数字与关键判级：
+
+| 组 | 结论 | PR |
+|---|---|---|
+| C1 基线迁移 | IC 0.0453 / ICIR 0.255 / 净超额 +23.8%/年（test 2025-2026，top-300 池） | #21 |
+| C2 截面加宽 | IC 随宽度严格上升（0.0001→0.0570）；净超额与 IC 多次背离；top-300 组合层最一致 | #23 |
+| C3 评估报告 | report.md + IC 累计图 + decile 阶梯 + 多空 spread（t 统计量），backtest 自动附带 | #22 |
+| C4 cs_norm | **zscore 稳定正向**（IC 3/3 子窗 ≥ 基线），建议作为后续 A/B 默认；rank 不采用 | #24 |
+| C5 lambdarank | 显著为负（RankIC −0.026），基建保留，后续调参候选记录在案 | #25 |
+| C6 行业中性化 | 排序度量大幅提升但净超额崩（2/3 子窗为负）——不采用，确认非单窗巧合 | #26 |
+| C7 反哺 crypto | zscore 在币安纯 alpha 度量全面退步，不采用；crypto 维持 raw Alpha158 | — |
+
+方法论沉淀：`scripts/backtest_stability.py`（任意 config 的子窗口 + bootstrap
+稳定性检验）已入库，**每个新 A/B 的 winner 必须先过它再采纳**；full-window
+winner 跨子窗口不重现 = regime 噪声（C2 top-2000、C6、24 钟点实验三次验证）。
+
+## 研究记录：24 钟点实验（2026-08-11/12，用户需求）
+
+把一天 24 小时构成 24 个数据集（`data.hour_of_day`，各钟点锚定的日频序列，
+label = 隔日同钟点收益），各自独立 dataset→train→backtest（PR #27 基建，
+#28 稳定性分析）：
+
+- **机制成立**：24 个钟点全部跑通、全部正 IC（0.013~0.060），无死钟点；
+- **钟点差异是噪声**：子窗口排名相关 ≈ 0（sw1-vs-sw2 +0.03），全窗"最佳小时"
+  12:00 +175% 由一段 60 天暴涨撑起（去掉后 0/24 个钟点 bootstrap CI 排除 0）；
+- **可辩护结论**：12/24 钟点三子窗口全正——"每个钟点都弱跑赢 BTC"成立，
+  "某钟点更强"不成立；
+- **年化超额误差**：6 个月 × 48 币，SE ≈ ±70%（正态近似）/ ±25-60%（block
+  bootstrap，日超额均值回归）；t ≈ 0.3，任何 crypto 6 个月超额数字都是噪声量级；
+- 复现：`scripts/gen_binance_hour_ab.py` + 24 条 dataset/train/backtest；
+  分析：`scripts/hour_of_day_stability.py`。
+
 ## 稳定性复检（2026-08-12，`scripts/backtest_stability.py`）
 
 对 C2/C4/C6 的 A/B 补做子窗口滚动验证（test 拆 3 段 × IC/ICIR/RankIC/超额 + block-bootstrap CI），结论分级：
