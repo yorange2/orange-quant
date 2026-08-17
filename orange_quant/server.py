@@ -4,20 +4,24 @@ Usage:
     python -m orange_quant.server --config binance-rl-rotation --once --dry-run
     python -m orange_quant.server --config binance-rl-rotation --hour 0 --minute 15
 
-The loop sleeps until the configured wall-clock time each day, executes the
-strategy once (idempotent via the runner's state file), writes a heartbeat file
-for the Docker HEALTHCHECK, and watches for hangs (a watchdog thread force-exits
-on deadlock so Docker restarts it).
+The loop wakes every 20s and fires as soon as the configured UTC time has
+*passed* and the strategy has not acted yet on that date — so a run missed
+while the host slept (Docker suspends the VM; a wall-clock minute window would
+be skipped entirely) is caught up on the next tick instead of lost for the day.
+It executes the strategy once (idempotent via the runner's state file), writes a
+heartbeat file for the Docker HEALTHCHECK, and watches for hangs (a watchdog
+thread force-exits on deadlock so Docker restarts it).
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 log = logging.getLogger("orange-quant")
@@ -36,6 +40,23 @@ def _watchdog(done: threading.Event) -> None:
     if not done.wait(_WATCHDOG_SECONDS):
         log.error(f"watchdog: no completion within {_WATCHDOG_SECONDS}s, exiting")
         os._exit(1)  # noqa: SLF001 - deliberate hard exit
+
+
+def _last_acted_date(runner):
+    """UTC date the runner last acted on, from its state file (None if unknown).
+
+    Both runners write ``{"date": "YYYY-MM-DD"}`` (UTC) after every run and use
+    it for their own idempotency guard; reading it here just avoids re-entering
+    a full run_once that would immediately skip.
+    """
+    path = getattr(runner, "state_file", None)
+    if path is None or not Path(path).exists():
+        return None
+    try:
+        raw = json.loads(Path(path).read_text()).get("date")
+        return datetime.strptime(raw, "%Y-%m-%d").date() if raw else None
+    except (ValueError, TypeError, json.JSONDecodeError, OSError):
+        return None  # unreadable/legacy state — treat as never run
 
 
 def run(config_name: str, once: bool, dry_run: bool, force: bool,
@@ -65,15 +86,27 @@ def run(config_name: str, once: bool, dry_run: bool, force: bool,
         _heartbeat()
         return
 
+    # Seed from the runner's state file so a restart later the same day does
+    # not redo the (expensive) dataset + policy load just to have run_once
+    # skip on its own idempotency check.
+    last_fired = None if force else _last_acted_date(runner)
+    log.info(f"server: schedule {hour:02d}:{minute:02d} UTC, last acted {last_fired}")
+
     while True:
-        now = datetime.now()
-        if now.hour == hour and now.minute == minute:
+        now = datetime.now(timezone.utc)
+        due_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        # fire on "the time has passed and today has not run yet" rather than
+        # on an exact minute match: the window survives a suspended host, and
+        # a multi-day gap still fires once (missed days are stale, not queued)
+        if now >= due_at and last_fired != now.date():
             _heartbeat()
             # arm the watchdog for this run only: a hung run_once force-exits
             # and Docker's restart policy recovers; the wait loop between runs
             # is not watched (so no spurious hourly restarts)
             done = threading.Event()
             threading.Thread(target=_watchdog, args=(done,), daemon=True).start()
+            late = (now - due_at).total_seconds()
+            log.info(f"server: firing for {now.date()} ({late / 60:.0f} min after {due_at:%H:%M} UTC)")
             try:
                 result = runner.run_once()
                 log.info(f"server: run result orders={len(result.get('orders', []))}")
@@ -81,12 +114,13 @@ def run(config_name: str, once: bool, dry_run: bool, force: bool,
                 log.exception("server: run_once failed")
             finally:
                 done.set()
+            # mark the date done either way: a failed run must not re-fire in a
+            # tight loop, and the next day's tick recovers on schedule
+            last_fired = now.date()
             _heartbeat()
-            # sleep past the minute to avoid double-fire
-            time.sleep(61)
         else:
             _heartbeat()  # fresh on every wait tick: healthcheck liveness
-            time.sleep(20)
+        time.sleep(20)
 
 
 def main() -> None:
