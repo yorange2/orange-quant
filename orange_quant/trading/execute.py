@@ -81,3 +81,40 @@ def rebalance(target_w: Dict[str, float], codes: List[str], broker,
     placed = place_orders(broker, orders)
     print(f"[execute] value={value:.2f} {quote_ccy}, {len(placed)} orders placed")
     return {"orders": placed, "portfolio_value": round(value, 2)}
+
+
+def sweep_out_of_universe(broker, codes: List[str], min_notional: float) -> dict:
+    """Sell any held coin outside the strategy universe, so the account only
+    ever carries universe coins + quote currency.
+
+    Run before the weight rebalance so the returned USDT participates in the
+    same day's deployment. Dust (value < min_notional) is skipped — it is best
+    cleaned up via the venue's dust-conversion tool. Coins with no quote pair
+    fail inside ``market_sell`` and are reported but never block the rest.
+    """
+    quote_ccy = broker.quote_ccy
+    universe = set(codes)
+    balances = broker.get_free_balances() or {}
+    stray = sorted(set(balances) - universe - {quote_ccy})
+    if not stray:
+        print("[sweep] no out-of-universe coins")
+        return {"sweep_orders": [], "swept_value": 0.0}
+
+    prices = broker.get_current_prices(stray) or {}
+    orders, swept = [], 0.0
+    for coin in stray:
+        qty = float(balances.get(coin, 0.0))
+        value = qty * prices.get(coin, 0.0)
+        if value < min_notional:
+            print(f"[sweep] skip {coin}: {value:.2f} < {min_notional:.0f} {quote_ccy} (dust)")
+            continue
+        try:
+            r = broker.market_sell(coin, qty, price=prices.get(coin))
+            orders.append({"coin": coin, "side": "sell", "amount": qty,
+                           "price": prices.get(coin), "result": r})
+            swept += value
+        except Exception as e:  # noqa: BLE001 - per-order isolation
+            orders.append({"coin": coin, "side": "sell", "amount": qty,
+                           "error": str(e)})
+    print(f"[sweep] sold {len(orders)}/{len(stray)} stray coins ≈ {swept:.2f} {quote_ccy}")
+    return {"sweep_orders": orders, "swept_value": round(swept, 2)}

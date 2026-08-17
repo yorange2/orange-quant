@@ -38,6 +38,15 @@ class Broker(ABC):
         """Return {coin: free balance} (quote currency included)."""
 
     @abstractmethod
+    def get_free_balances(self) -> Dict[str, float]:
+        """Return {coin: free balance} — only settled funds that can be traded.
+
+        Distinct from :meth:`get_balances` for venues that report locked /
+        on-order funds (Binance total vs free); venues without locking may
+        return the same dict.
+        """
+
+    @abstractmethod
     def get_current_prices(self, coins: List[str]) -> Dict[str, float]:
         """Return {coin: last price} for the given coins."""
 
@@ -86,6 +95,10 @@ class CcxtBroker(Broker):
 
     def _symbol(self, coin: str) -> str:
         return f"{coin}/{self.quote_ccy}"
+
+    def get_free_balances(self) -> Dict[str, float]:
+        """Default: same as :meth:`get_balances`; venues with locked funds override."""
+        return self.get_balances()
 
     @staticmethod
     def _ticker_price(t: dict) -> Optional[float]:

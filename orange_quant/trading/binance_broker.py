@@ -66,6 +66,15 @@ class BinanceBroker(CcxtBroker):
                 result[asset] = float(info)
         return result
 
+    def get_free_balances(self) -> Dict[str, float]:
+        """Free balances only (no locked / on-order funds) — what can be sold."""
+        balance = self.exchange.fetch_balance()
+        result = {}
+        for asset, info in balance["free"].items():
+            if info and info > 0:
+                result[asset] = float(info)
+        return result
+
     def market_buy(self, coin: str, amount_usdt: float,
                    price: Optional[float] = None) -> Optional[dict]:
         """Market buy (amount specified in USDT notional)."""

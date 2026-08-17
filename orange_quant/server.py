@@ -31,11 +31,11 @@ def _heartbeat() -> None:
     Path(HEARTBEAT_PATH).write_text(str(int(time.time())))
 
 
-def _watchdog() -> None:
-    """Force-exit if a run hangs (Docker restart policy recovers)."""
-    time.sleep(_WATCHDOG_SECONDS)
-    log.error(f"watchdog: no completion within {_WATCHDOG_SECONDS}s, exiting")
-    os._exit(1)  # noqa: SLF001 - deliberate hard exit
+def _watchdog(done: threading.Event) -> None:
+    """Force-exit if the current run hangs (Docker restart policy recovers)."""
+    if not done.wait(_WATCHDOG_SECONDS):
+        log.error(f"watchdog: no completion within {_WATCHDOG_SECONDS}s, exiting")
+        os._exit(1)  # noqa: SLF001 - deliberate hard exit
 
 
 def run(config_name: str, once: bool, dry_run: bool, force: bool,
@@ -65,20 +65,27 @@ def run(config_name: str, once: bool, dry_run: bool, force: bool,
         _heartbeat()
         return
 
-    threading.Thread(target=_watchdog, daemon=True).start()
     while True:
         now = datetime.now()
         if now.hour == hour and now.minute == minute:
             _heartbeat()
+            # arm the watchdog for this run only: a hung run_once force-exits
+            # and Docker's restart policy recovers; the wait loop between runs
+            # is not watched (so no spurious hourly restarts)
+            done = threading.Event()
+            threading.Thread(target=_watchdog, args=(done,), daemon=True).start()
             try:
                 result = runner.run_once()
                 log.info(f"server: run result orders={len(result.get('orders', []))}")
             except Exception:  # noqa: BLE001 - keep the loop alive
                 log.exception("server: run_once failed")
+            finally:
+                done.set()
             _heartbeat()
             # sleep past the minute to avoid double-fire
             time.sleep(61)
         else:
+            _heartbeat()  # fresh on every wait tick: healthcheck liveness
             time.sleep(20)
 
 

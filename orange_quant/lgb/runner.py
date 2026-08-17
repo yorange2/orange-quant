@@ -38,6 +38,8 @@ class LGBRotationRunner:
         self.max_position_pct = float(trading.get("max_position_pct", 0.25))
         self.lookback = int(trading.get("lookback", 160))
         self.min_notional_safety = float(trading.get("min_notional_safety", 20.0))
+        self.sweep_out_of_universe = bool(trading.get("sweep_out_of_universe", False))
+        self.sweep_min_notional = float(trading.get("sweep_min_notional", 5.0))
         self.blacklist_path = trading.get("blacklist")
         self.state_file = Path(trading.get("state_file", "data/live_state/state.json"))
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -100,10 +102,13 @@ class LGBRotationRunner:
         pred = np.where(np.isnan(X).all(axis=1), -np.inf, pred)  # no-history coins
         target = self._target_weights(pred)
 
-        from orange_quant.trading.execute import rebalance
+        from orange_quant.trading.execute import rebalance, sweep_out_of_universe as sweep
 
-        result = rebalance(target, self.ds.codes, self.broker,
-                           self.min_notional_safety)
+        result = {}
+        if self.sweep_out_of_universe:
+            result.update(sweep(self.broker, self.ds.codes, self.sweep_min_notional))
+        result.update(rebalance(target, self.ds.codes, self.broker,
+                                self.min_notional_safety))
         result.update({
             "date": today,
             "targets": {k: round(v, 4) for k, v in target.items()},
