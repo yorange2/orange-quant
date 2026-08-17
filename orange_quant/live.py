@@ -23,6 +23,7 @@ import pandas as pd
 import torch
 from tianshou.data import Batch
 
+from orange_quant.data.refresh import refresh_and_gate
 from orange_quant.rl.dataset import load_config, bar_reader, _per_stock_features, _FEATURE_COLS
 from orange_quant.rl.env import RotationEnv
 
@@ -37,6 +38,8 @@ class RLRotationRunner:
         self.min_notional_safety = float(trading.get("min_notional_safety", 20.0))
         self.sweep_out_of_universe = bool(trading.get("sweep_out_of_universe", False))
         self.sweep_min_notional = float(trading.get("sweep_min_notional", 5.0))
+        self.refresh_data = bool(trading.get("refresh_data", False))
+        self.max_bar_age_days = int(trading.get("max_bar_age_days", 2))
         self.state_file = Path(trading.get("state_file", "data/live_state/state.json"))
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -95,6 +98,19 @@ class RLRotationRunner:
             print(f"[live] state tiers len {len(self._prev_tiers)} != universe "
                   f"{ds.n_stocks}, resetting to all-cash")
             self._prev_tiers = np.zeros(ds.n_stocks, dtype=np.int64)
+
+        # pull today's missing bars before building the observation — the CSVs
+        # are the only price source on the live path, and nothing else updates
+        # them. Stale bars mean trading yesterday's signal, so refuse rather
+        # than act on them; the state file is left untouched so the next run
+        # (or the next day) retries cleanly.
+        fresh, refresh_report = refresh_and_gate(
+            self.cfg, ds.codes, self.refresh_data, self.max_bar_age_days)
+        if not fresh:
+            print(f"[live] stale bars, not trading on {today}")
+            return {"skipped": True, "reason": "stale_data", "date": today,
+                    "refresh": refresh_report}
+
         obs = self._current_obs(ds, today)
 
         policy.eval()
