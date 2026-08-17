@@ -21,6 +21,7 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 
+from orange_quant.data.refresh import refresh_and_gate
 from orange_quant.lgb.dataset import load_or_build, load_config
 from orange_quant.lgb.features import FEATURE_COLS, alpha158_features
 from orange_quant.rl.dataset import bar_reader
@@ -40,6 +41,8 @@ class LGBRotationRunner:
         self.min_notional_safety = float(trading.get("min_notional_safety", 20.0))
         self.sweep_out_of_universe = bool(trading.get("sweep_out_of_universe", False))
         self.sweep_min_notional = float(trading.get("sweep_min_notional", 5.0))
+        self.refresh_data = bool(trading.get("refresh_data", False))
+        self.max_bar_age_days = int(trading.get("max_bar_age_days", 2))
         self.blacklist_path = trading.get("blacklist")
         self.state_file = Path(trading.get("state_file", "data/live_state/state.json"))
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -96,6 +99,16 @@ class LGBRotationRunner:
         if state.get("date") == today and not self.force:
             print(f"[lgb-live] already executed on {today}, skipping (--force to rerun)")
             return {"skipped": True, "date": today}
+
+        # pull today's missing bars before building features — see the same
+        # gate in live.RLRotationRunner.run_once for why stale bars abort the
+        # run instead of silently trading yesterday's signal
+        fresh, refresh_report = refresh_and_gate(
+            self.cfg, self.ds.codes, self.refresh_data, self.max_bar_age_days)
+        if not fresh:
+            print(f"[lgb-live] stale bars, not trading on {today}")
+            return {"skipped": True, "reason": "stale_data", "date": today,
+                    "refresh": refresh_report}
 
         X = self._features_today(today)
         pred = self.model.predict(X)
