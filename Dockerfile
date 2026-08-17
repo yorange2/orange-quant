@@ -7,9 +7,13 @@ ENV MLFLOW_ALLOW_FILE_STORE=true \
 
 WORKDIR /app
 
-# Install dependencies
+# Install dependencies. Host is a Mac — the container never gets a GPU, so
+# pull the CPU-only torch first (the PyPI linux wheel bundles ~3GB of CUDA
+# libs); pip keeps the pre-installed torch since pyproject requires >=2.5.
+# The CPU index caps at 2.5.1 for linux-aarch64 (as of 2026-08).
 COPY pyproject.toml .
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir .
 
 # Copy project code and configs
 COPY orange_quant/ ./orange_quant/
