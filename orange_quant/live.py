@@ -35,6 +35,8 @@ class RLRotationRunner:
         trading = self.cfg.get("trading", {})
         self.risk_degree = float(trading.get("risk_degree", 0.95))
         self.min_notional_safety = float(trading.get("min_notional_safety", 20.0))
+        self.sweep_out_of_universe = bool(trading.get("sweep_out_of_universe", False))
+        self.sweep_min_notional = float(trading.get("sweep_min_notional", 5.0))
         self.state_file = Path(trading.get("state_file", "data/live_state/state.json"))
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -104,7 +106,11 @@ class RLRotationRunner:
             self.cfg["env"]["max_weight"]) * self.risk_degree
         target = {ds.codes[i]: float(w[i]) for i in range(ds.n_stocks) if w[i] > 0}
 
-        result = self._execute(target, ds.codes)
+        result = {}
+        if self.sweep_out_of_universe:
+            from orange_quant.trading.execute import sweep_out_of_universe as sweep
+            result.update(sweep(self.broker, ds.codes, self.sweep_min_notional))
+        result.update(self._execute(target, ds.codes))
         result.update({"date": today, "tiers": tiers.tolist(),
                        "weights": {ds.codes[i]: round(float(w[i]), 4) for i in range(ds.n_stocks)}})
         self.state_file.write_text(json.dumps(result, indent=2, ensure_ascii=False))

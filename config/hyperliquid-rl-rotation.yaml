@@ -101,4 +101,6 @@ paths:
 trading:
     risk_degree: 0.95                     # 目标权重总仓位缩放
     min_notional_safety: 20.0             # 低于此名义金额不下单（USD）
+    sweep_out_of_universe: true           # 自动卖出策略宇宙之外的币
+    sweep_min_notional: 5.0               # 低于此名义的池外币跳过（dust）
     state_file: "data/live_state/hyperliquid.json"
