@@ -87,5 +87,9 @@ trading:
     sweep_min_notional: 5.0               # 低于此名义的池外币跳过（dust）
     refresh_data: true                    # 跑之前增量补齐当日之前的 K 线
     max_bar_age_days: 2                   # 最新 bar 早于今天-N 天则不交易（当日 bar 未收盘，1=有昨收）
+    min_universe: 30                      # 宇宙冻结在 2026-08-07，其后陆续有币从 Binance 现货
+                                          # 下架/停更。新鲜度门先把这些 dark 名字从宇宙里剔除，
+                                          # 再检查剩余数 >= 30；剔除的不进排序（不靠打分兜底）。
+                                          # 不设此项则回到"全员必须新鲜"，一个死币即永久红灯。
     state_file: "data/live_state/binance-lgb.json"
     blacklist: "data/reduce_only_blacklist.json"

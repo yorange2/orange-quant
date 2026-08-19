@@ -7,6 +7,13 @@ ENV MLFLOW_ALLOW_FILE_STORE=true \
 
 WORKDIR /app
 
+# LightGBM links against the OpenMP runtime, which python:*-slim does not ship;
+# without it `import lightgbm` dies with "libgomp.so.1: cannot open shared
+# object file". The RL path never hit this because torch bundles its own copy.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies. Host is a Mac — the container never gets a GPU, so
 # pull the CPU-only torch first (the PyPI linux wheel bundles ~3GB of CUDA
 # libs); pip keeps the pre-installed torch since pyproject requires >=2.5.

@@ -59,7 +59,25 @@ class PooledHourModel:
 
     def _load(self):
         if self._model is None:
-            with open(Path(self.model_path), "rb") as f:
+            path = Path(self.model_path)
+            if not path.exists():
+                # the proxy was pickled with the writer's absolute path, which
+                # does not exist inside a container (/app/models/...). Fall back
+                # to the same file addressed from the repo root.
+                for anchor in ("models", "orange-quant"):
+                    parts = path.parts
+                    if anchor in parts:
+                        rel = Path(*parts[parts.index(anchor):])
+                        if anchor == "orange-quant":
+                            rel = Path(*rel.parts[1:])
+                        if rel.exists():
+                            path = rel
+                            break
+                else:
+                    raise FileNotFoundError(
+                        f"pooled model not found at {self.model_path} nor "
+                        f"relative to cwd {Path.cwd()}")
+            with open(path, "rb") as f:
                 self._model = pickle.load(f)
         return self._model
 

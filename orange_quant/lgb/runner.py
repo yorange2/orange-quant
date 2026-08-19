@@ -43,6 +43,14 @@ class LGBRotationRunner:
         self.sweep_min_notional = float(trading.get("sweep_min_notional", 5.0))
         self.refresh_data = bool(trading.get("refresh_data", False))
         self.max_bar_age_days = int(trading.get("max_bar_age_days", 2))
+        # rolling24h only: how far each hourly view may lag its requested bar
+        self.max_lag_hours = int(trading.get("max_lag_hours", 0))
+        # Floor on the *tradeable* universe. Set it and the freshness gate
+        # switches from "every frozen name must be fresh" (which one delisting
+        # red-lights forever) to "prune the dark names, then check enough is
+        # left". Left unset, the strict all-must-be-fresh rule applies.
+        mu = trading.get("min_universe")
+        self.min_universe = int(mu) if mu is not None else None
         self.blacklist_path = trading.get("blacklist")
         self.state_file = Path(trading.get("state_file", "data/live_state/state.json"))
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -50,7 +58,21 @@ class LGBRotationRunner:
         self.ds = load_or_build(self.cfg)          # cached codes + splits (cheap)
         with open(Path(self.cfg["paths"]["model_dir"]) / "model.pkl", "rb") as f:
             self.model = pickle.load(f)
-        print(f"[lgb-live] loaded model + {len(self.ds.codes)}-coin universe")
+
+        # ``strategy.blend: rolling24h`` swaps the single-view score for the
+        # 24-hourly-view blend (one pooled model, 24 clock anchors). Everything
+        # downstream — ranking, top-k, execution — is unchanged.
+        self.blend = self.cfg.get("strategy", {}).get("blend")
+        self.scorer = None
+        if self.blend == "rolling24h":
+            from orange_quant.lgb.rolling24h import Rolling24hScorer
+
+            self.scorer = Rolling24hScorer(self.cfg, self.ds.codes, self.model,
+                                           lookback=self.lookback)
+        elif self.blend:
+            raise ValueError(f"unknown strategy.blend {self.blend!r} (expected rolling24h)")
+        mode = self.blend or "single-view"
+        print(f"[lgb-live] loaded model + {len(self.ds.codes)}-coin universe ({mode})")
 
     # ------------------------------------------------------------------ steps
     def _features_today(self, date: str) -> np.ndarray:
@@ -80,7 +102,9 @@ class LGBRotationRunner:
         target: Dict[str, float] = {}
         for c in ranked:
             coin = codes[c]
-            if coin in black or np.isnan(pred[c]):
+            # non-finite = never scored (no history, or no view covered it);
+            # -inf sorts last but must not be bought just to fill top-k
+            if coin in black or not np.isfinite(pred[c]):
                 continue
             target[coin] = w
             if len(target) >= self.topk:
@@ -104,15 +128,46 @@ class LGBRotationRunner:
         # gate in live.RLRotationRunner.run_once for why stale bars abort the
         # run instead of silently trading yesterday's signal
         fresh, refresh_report = refresh_and_gate(
-            self.cfg, self.ds.codes, self.refresh_data, self.max_bar_age_days)
+            self.cfg, self.ds.codes, self.refresh_data, self.max_bar_age_days,
+            self.min_universe)
         if not fresh:
             print(f"[lgb-live] stale bars, not trading on {today}")
             return {"skipped": True, "reason": "stale_data", "date": today,
                     "refresh": refresh_report}
+        # names the gate pruned are out of the universe for this run — they must
+        # not be ranked at all, or the strategy would trade a delisted coin off
+        # week-old features that still look perfectly well-formed
+        dropped = set(refresh_report.get("dropped") or ())
 
-        X = self._features_today(today)
-        pred = self.model.predict(X)
-        pred = np.where(np.isnan(X).all(axis=1), -np.inf, pred)  # no-history coins
+        if self.scorer is not None:
+            pred, blend_report = self.scorer.scores(max_lag_hours=self.max_lag_hours)
+            result_extra = {"blend": self.blend, **blend_report}
+            print(f"[lgb-live] rolling24h: {blend_report['views_used']}/24 views, "
+                  f"data {blend_report['data_window']}, "
+                  f"{blend_report['coins_scored']}/{len(self.ds.codes)} coins scored")
+            # the hourly feed has its own staleness gate: refresh_and_gate above
+            # only understands daily bars, so it passes a 10-day-old hourly feed
+            if blend_report["stale"] and not self.force:
+                print(f"[lgb-live] STALE blend, not trading: "
+                      f"{blend_report['stale_reason']}")
+                return {"skipped": True, "reason": "stale_blend", "date": today,
+                        **result_extra}
+            if blend_report["stale"]:
+                print(f"[lgb-live] WARNING stale blend, --force overrides: "
+                      f"{blend_report['stale_reason']}")
+        else:
+            X = self._features_today(today)
+            pred = self.model.predict(X)
+            pred = np.where(np.isnan(X).all(axis=1), np.nan, pred)
+            result_extra = {}
+        if dropped:
+            drop_idx = [i for i, c in enumerate(self.ds.codes) if c in dropped]
+            pred = np.asarray(pred, dtype=np.float64).copy()
+            pred[drop_idx] = np.nan
+            result_extra["pruned_universe"] = sorted(dropped)
+            print(f"[lgb-live] excluded {len(dropped)} pruned names from ranking: "
+                  f"{', '.join(sorted(dropped))}")
+        pred = np.where(np.isnan(pred), -np.inf, pred)   # unscored coins rank last
         target = self._target_weights(pred)
 
         from orange_quant.trading.execute import rebalance, sweep_out_of_universe as sweep
@@ -125,6 +180,7 @@ class LGBRotationRunner:
         result.update({
             "date": today,
             "targets": {k: round(v, 4) for k, v in target.items()},
+            **result_extra,
         })
         self.state_file.write_text(json.dumps(result, indent=2, ensure_ascii=False))
         print(f"[lgb-live] state written: {self.state_file}")
