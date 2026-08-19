@@ -61,13 +61,19 @@ class HourEnsemble:
     """
 
     def __init__(self, base: str = "binance-lgb-momtopk",
-                 hours: List[int] | None = None) -> None:
+                 hours: List[int] | None = None, ref_hour: int = 0) -> None:
         self.base = base
         self.hours = list(range(24)) if hours is None else list(hours)
+        # ``ref_hour`` picks the EXECUTION anchor: the blended score is the
+        # same for every choice, but the backtest fills on that anchor's bars.
+        # Varying it is what makes the ensemble's per-anchor Sharpe spread
+        # comparable with the per-hour and pooled designs.
+        self.ref_hour = int(ref_hour)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         # X is ignored — member scores come from each hour's own dataset.
-        ref = load_or_build(load_config(f"{self.base}-h00"))
+        ref_hour = getattr(self, "ref_hour", 0)   # pickles predate the attr
+        ref = load_or_build(load_config(f"{self.base}-h{ref_hour:02d}"))
         test_s, test_e = ref.split_idx["test"]
         t1 = test_e - 2                                   # last decision day
         D = t1 - test_s + 1
