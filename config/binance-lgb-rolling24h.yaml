@@ -1,0 +1,83 @@
+# 滚动 24h 视角混合（PR #36 的采纳设计）的实盘配置。
+# 打分：一个池化模型 × 最近 24 根已收盘小时线锚定的视角，截面 z-score 后平均。
+# 宇宙与日历沿用 h00 缓存（48 币各锚点一致）；执行沿用 LGBRotationRunner。
+# data.freq=1h 让 refresh_bars 走小时线增量；每个视角要的是**已收盘**的小时线，
+# 所以 trading.max_lag_hours=0 —— 任一视角缺当班那根线就不交易。
+# trading.min_universe=30 —— 宇宙冻结在 2026-08-07，其后有币从 Binance 现货下架
+#   /停更（当前 6 个）。新鲜度门先把它们从宇宙里**剔除**，再检查剩下的够不够：
+#   剔除的名字不进排序（不是靠打分为 NaN 兜底），剩余数低于 30 则整轮不交易。
+#   topk=20，30 的下限留了 10 个名额的选择余量。
+backtest:
+  account: 1000000
+  bars_per_year: 238
+  benchmark: BTC
+  cost_rate: 0.001
+  min_cost: 0
+data:
+  end_time: '2026-08-01'
+  freq: 1h
+  hour_of_day: 0
+  raw_dir: data/binance_h1_raw
+  start_time: '2020-01-01'
+ensemble:
+  n_seeds: 5
+features:
+  warmup_start: '2019-06-01'
+lgb:
+  bagging_fraction: 0.8
+  bagging_freq: 1
+  early_stopping_rounds: 100
+  feature_fraction: 0.6
+  lambda_l1: 2.0
+  lambda_l2: 2.0
+  learning_rate: 0.02
+  loss: mse
+  min_data_in_leaf: 100
+  num_boost_round: 1000
+  num_leaves: 15
+  seed: 42
+market:
+  benchmark_symbol: BTC
+  quote_ccy: USDT
+  type: crypto
+  venue: binance
+paths:
+  cache_dir: data/binance-lgb-momtopk-h00
+  model_dir: models/binance-lgb-momtopk-pooled
+  output_dir: outputs/binance-lgb-rolling24h
+strategy:
+  blend: rolling24h
+  hold_thresh: 2
+  n_drop: 1
+  risk_degree: 0.7
+  topk: 20
+  type: lgb
+test:
+  end: '2026-08-01'
+  start: '2026-02-01'
+trading:
+  blacklist: data/reduce_only_blacklist.json
+  lookback: 160
+  max_bar_age_days: 2
+  max_lag_hours: 0
+  max_position_pct: 0.25
+  min_notional_safety: 20.0
+  min_trade: 20.0
+  min_universe: 30
+  refresh_data: true
+  risk_degree: 0.7
+  state_file: data/live_state/binance-lgb-rolling24h.json
+  topk: 20
+train:
+  end: '2025-06-30'
+  start: '2020-01-01'
+universe:
+  freeze_date: '2026-08-07'
+  liquidity_start: '2025-01-01'
+  min_history_days: 200
+  provider: liquidity
+  raw_dir: data/binance_h1_raw
+  top_n: 50
+valid:
+  end: '2026-01-31'
+  start: '2025-07-01'

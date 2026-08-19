@@ -36,8 +36,22 @@ class DataSource:
 
 
 def _date_to_ms(date_str: str) -> int:
-    dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    return int(dt.timestamp() * 1000)
+    """UTC epoch ms for ``YYYY-MM-DD`` or ``YYYY-MM-DD HH:MM:SS``.
+
+    The resume path feeds this the last row of an existing CSV, and hourly
+    files carry the hour (``candles_to_csv`` keeps it deliberately). Parsing
+    date-only here made every hourly incremental update raise
+    ``unconverted data remains: 07:00:00`` — so hourly data could only ever be
+    rebuilt with ``--force``.
+    """
+    date_str = str(date_str).strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc)
+            return int(dt.timestamp() * 1000)
+        except ValueError:
+            continue
+    raise ValueError(f"unparseable bar timestamp: {date_str!r}")
 
 
 def _ms_to_date(ms: int) -> str:
