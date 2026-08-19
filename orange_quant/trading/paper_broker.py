@@ -15,6 +15,8 @@ from datetime import datetime
 
 
 class PaperBroker(CcxtBroker):
+    is_paper = True                    # keeps paper runs off the live state file
+
     def __init__(
         self,
         coins: List[str],

@@ -29,6 +29,11 @@ class Broker(ABC):
     #: Settlement currency of the venue (e.g. "USDT" / "USDC"); set by __init__.
     quote_ccy: str
 
+    #: Whether fills are simulated. Live brokers leave this False; the runners
+    #: key their idempotency state file off it so a paper run cannot mark the
+    #: day done for the live one (and vice versa).
+    is_paper: bool = False
+
     @abstractmethod
     def _verify_connection(self) -> None:
         """Raise if the venue cannot be reached."""
