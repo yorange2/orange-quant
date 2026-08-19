@@ -1,6 +1,25 @@
 """Shared trading primitives (coin-based broker interface + paper broker)."""
 
+from pathlib import Path
+
 _VENUES = ("binance", "hyperliquid")
+
+
+def state_path_for(broker, configured: str) -> Path:
+    """Idempotency-state path for this broker, ``.paper`` inserted for paper runs.
+
+    Both runners guard on "already acted today" via this file, and the server
+    seeds its scheduler from it. Sharing one path across modes means a paper
+    dry-run silently marks the day done for the live server — the live trade
+    then never fires, with nothing in the logs to say why. Splitting on
+    ``broker.is_paper`` keeps the two ledgers independent.
+
+    ``data/live_state/x.json`` → ``data/live_state/x.paper.json``
+    """
+    p = Path(configured)
+    if not getattr(broker, "is_paper", False):
+        return p
+    return p.with_suffix(f".paper{p.suffix}")
 
 
 def make_broker(cfg: dict, kind: str):

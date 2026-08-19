@@ -52,7 +52,10 @@ class LGBRotationRunner:
         mu = trading.get("min_universe")
         self.min_universe = int(mu) if mu is not None else None
         self.blacklist_path = trading.get("blacklist")
-        self.state_file = Path(trading.get("state_file", "data/live_state/state.json"))
+        from orange_quant.trading import state_path_for
+
+        self.state_file = state_path_for(
+            broker, trading.get("state_file", "data/live_state/state.json"))
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
 
         self.ds = load_or_build(self.cfg)          # cached codes + splits (cheap)

@@ -40,7 +40,10 @@ class RLRotationRunner:
         self.sweep_min_notional = float(trading.get("sweep_min_notional", 5.0))
         self.refresh_data = bool(trading.get("refresh_data", False))
         self.max_bar_age_days = int(trading.get("max_bar_age_days", 2))
-        self.state_file = Path(trading.get("state_file", "data/live_state/state.json"))
+        from orange_quant.trading import state_path_for
+
+        self.state_file = state_path_for(
+            broker, trading.get("state_file", "data/live_state/state.json"))
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------ steps
