@@ -13,6 +13,10 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Set
 
+# Fraction of free quote currency held back when sizing buys, so taker fees and
+# slippage on the last order cannot push the account into "insufficient balance".
+CASH_BUFFER = 0.005
+
 
 def diff_orders(target_w: Dict[str, float], codes: List[str], balances: Dict[str, float],
                 prices: Dict[str, float], quote_ccy: str,
@@ -48,21 +52,65 @@ def diff_orders(target_w: Dict[str, float], codes: List[str], balances: Dict[str
     return orders, value
 
 
-def place_orders(broker, orders: List[dict]) -> List[dict]:
+def _place_one(broker, o: dict) -> dict:
+    """Place a single order, capturing a raising broker as an ``error`` field."""
+    try:
+        if o["side"] == "buy":
+            r = broker.market_buy(o["coin"], o["amount_quote"], price=o.get("price"))
+        else:
+            r = broker.market_sell(o["coin"], o["amount"], price=o.get("price"))
+        return {**o, "result": r}
+    except Exception as e:  # noqa: BLE001 - per-order isolation
+        return {**o, "error": str(e)}
+
+
+def fit_buys_to_cash(buys: List[dict], free_quote: float,
+                     min_notional_safety: float,
+                     buffer: float = CASH_BUFFER) -> List[dict]:
+    """Scale buy notionals down to the quote currency actually on hand.
+
+    Even with sells placed first the funded amount can fall short of the plan
+    (fees, slippage between the reference price and the fill), so buys are
+    shrunk proportionally — keeping the relative weights intact — and any that
+    fall under the dust threshold are dropped rather than sent to fail."""
+    wanted = sum(o["amount_quote"] for o in buys)
+    spendable = free_quote * (1.0 - buffer)
+    if wanted <= spendable:
+        return buys
+
+    scale = spendable / wanted if wanted > 0 else 0.0
+    print(f"[execute] buys {wanted:.2f} > cash {free_quote:.2f}, scaling ×{scale:.3f}")
+    fitted = []
+    for o in buys:
+        amt = round(o["amount_quote"] * scale, 2)
+        if amt < min_notional_safety:
+            print(f"[execute] drop buy {o['coin']}: {amt:.2f} below min notional")
+            continue
+        fitted.append({**o, "amount_quote": amt})
+    return fitted
+
+
+def place_orders(broker, orders: List[dict],
+                 min_notional_safety: float = 0.0) -> List[dict]:
     """Place orders one by one; a failing order never blocks the rest.
+
+    Sells go first so the quote currency they free up is settled before the
+    buys spend it — placing in universe order instead lets an early buy exhaust
+    the balance and makes every later buy fail with "insufficient balance".
 
     The reference price fetched by the rebalance is passed through so brokers
     do not re-fetch a ticker per order on the live path."""
-    placed = []
-    for o in orders:
+    sells = [o for o in orders if o["side"] == "sell"]
+    buys = [o for o in orders if o["side"] != "sell"]
+
+    placed = [_place_one(broker, o) for o in sells]
+    if buys:
         try:
-            if o["side"] == "buy":
-                r = broker.market_buy(o["coin"], o["amount_quote"], price=o.get("price"))
-            else:
-                r = broker.market_sell(o["coin"], o["amount"], price=o.get("price"))
-            placed.append({**o, "result": r})
-        except Exception as e:  # noqa: BLE001 - per-order isolation
-            placed.append({**o, "error": str(e)})
+            free = float((broker.get_free_balances() or {}).get(broker.quote_ccy, 0.0))
+            buys = fit_buys_to_cash(buys, free, min_notional_safety)
+        except Exception as e:  # noqa: BLE001 - fall back to the unscaled plan
+            print(f"[execute] cash re-check failed ({e}), placing buys as planned")
+        placed += [_place_one(broker, o) for o in buys]
     return placed
 
 
@@ -78,8 +126,10 @@ def rebalance(target_w: Dict[str, float], codes: List[str], broker,
     prices = broker.get_current_prices(codes) or {}
     orders, value = diff_orders(target_w, codes, balances, prices,
                                 quote_ccy, min_notional_safety, blacklist=black)
-    placed = place_orders(broker, orders)
-    print(f"[execute] value={value:.2f} {quote_ccy}, {len(placed)} orders placed")
+    placed = place_orders(broker, orders, min_notional_safety)
+    ok = sum(1 for o in placed if o.get("result") is not None)
+    print(f"[execute] value={value:.2f} {quote_ccy}, "
+          f"{ok}/{len(placed)} orders filled")
     return {"orders": placed, "portfolio_value": round(value, 2)}
 
 
