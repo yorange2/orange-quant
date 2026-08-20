@@ -230,18 +230,25 @@ def scores_ens_causal(hour: int, zmaps: dict) -> np.ndarray:
 # evaluation
 # --------------------------------------------------------------------------
 def evaluate(design: str, hour: int, preds: np.ndarray,
-             topk: int | None = None) -> dict:
+             topk: int | None = None, cost_rate: float | None = None) -> dict:
     """Backtest ``preds`` on the anchor's own bars; returns the metrics dict.
 
     ``topk`` overrides the portfolio width. IC is computed from the same
     ``preds`` regardless, so sweeping topk separates signal quality (fixed)
     from portfolio construction (varying) — the check on whether a Sharpe gain
     is real alpha or the top of the ranking getting lucky.
+
+    ``cost_rate`` overrides the per-side fee. A design that only wins at the
+    modelled fee is not deployable: turnover differences between designs (and
+    between topk settings) only show up in the P&L once the fee is realistic,
+    so the edge has to be re-read at the fee actually paid.
     """
     ds = ds_for(hour)
     cfg = load_config(f"{BASE}-h{hour:02d}")
     if topk is not None:
         cfg["strategy"] = {**cfg["strategy"], "topk": int(topk)}
+    if cost_rate is not None:
+        cfg["backtest"] = {**cfg["backtest"], "cost_rate": float(cost_rate)}
     t0, t1 = decision_range(ds)
 
     rl, _ = run_backtest(cfg, ds, preds)
@@ -255,6 +262,7 @@ def evaluate(design: str, hour: int, preds: np.ndarray,
     m["design"] = design
     m["hour"] = hour
     m["topk"] = int(cfg["strategy"]["topk"])
+    m["cost_rate"] = float(cfg["backtest"]["cost_rate"])
     m["policy_nav"] = float(rl["nav"].iloc[-1])
     m["benchmark_nav"] = float(bmark[-1])
     m["equal_weight_nav"] = float(ew[-1])
@@ -274,6 +282,8 @@ def main() -> None:
     ap.add_argument("--topk", nargs="*", type=int, default=None,
                     help="sweep portfolio widths; scores are computed once and "
                          "re-run through the portfolio for each width")
+    ap.add_argument("--cost-rate", nargs="*", type=float, default=None,
+                    help="sweep per-side fee (e.g. 0.001 0.002)")
     ap.add_argument("--out", default=None, help="output basename under outputs/hour-designs")
     args = ap.parse_args()
 
@@ -295,11 +305,13 @@ def main() -> None:
             else:
                 preds = scores_pooled(h, design)
             for k in (args.topk or [None]):
-                m = evaluate(design, h, preds, topk=k)
-                rows.append(m)
-                print(f"[designs] {design:<18} h{h:02d} topk={m['topk']:<3} "
-                      f"sharpe={m['sharpe']:+.3f}  IR={m['information_ratio']:+.3f}  "
-                      f"IC={m['ic_mean']:+.4f}  NAV={m['policy_nav']:.4f}")
+                for c in (args.cost_rate or [None]):
+                    m = evaluate(design, h, preds, topk=k, cost_rate=c)
+                    rows.append(m)
+                    print(f"[designs] {design:<18} h{h:02d} topk={m['topk']:<3} "
+                          f"cost={m['cost_rate']:.4f} "
+                          f"sharpe={m['sharpe']:+.3f}  IR={m['information_ratio']:+.3f}  "
+                          f"turn={m['annual_turnover']:.1f}")
 
     base = args.out or "raw"
     (OUT / f"{base}.json").write_text(json.dumps(rows, ensure_ascii=False))
