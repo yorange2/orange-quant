@@ -7,6 +7,12 @@
 #   /停更（当前 6 个）。新鲜度门先把它们从宇宙里**剔除**，再检查剩下的够不够：
 #   剔除的名字不进排序（不是靠打分为 NaN 兜底），剩余数低于 30 则整轮不交易。
 #   topk=20，30 的下限留了 10 个名额的选择余量。
+# trading.min_notional_safety=6 —— 调仓死区（|目标−实际| 小于它就跳过）。原值 20
+#   在 ~$1,200 账户上相当于单仓 $44 的 45%，实测 20/20 个仓位全落在死区内、
+#   组合无法向目标收敛（ETH 曾漂到超目标 40%）。6 接近 Binance MIN_NOTIONAL=5
+#   的下限并留缓冲，死区降到单仓的 ~14%。
+# ⚠ trading.min_trade 目前是**死配置**——runner 读了但没有任何地方使用它。
+#   真正生效的是 min_notional_safety。两者保持同值以免误导。
 backtest:
   account: 1000000
   bars_per_year: 238
@@ -61,8 +67,8 @@ trading:
   max_bar_age_days: 2
   max_lag_hours: 0
   max_position_pct: 0.25
-  min_notional_safety: 20.0
-  min_trade: 20.0
+  min_notional_safety: 6.0
+  min_trade: 6.0
   min_universe: 30
   refresh_data: true
   risk_degree: 0.7
