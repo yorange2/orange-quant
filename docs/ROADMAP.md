@@ -298,6 +298,83 @@ Sharpe 1.234/1.131/1.031。
 真正生效的只有 `min_notional_safety`。只改前者会以为调了死区其实没调。两者已同步
 为 6 并在配置里标注。
 
+### 成交口径对齐：`exec_lag` × `features.lag`（2026-08-20，PR #41，**已上线**）
+
+标签是 `close[t+2]/close[t+1]−1`（qlib Alpha158 默认，隐含"隔一根 bar 成交"），回测
+严格照做（`exec_day = t+1`），但 `lgb/runner.py` 的实盘在信号当根 bar 收盘就市价成交、
+吃的是 `close[t]→close[t+1]`——训练目标与实际持仓段**错开整整一根 bar**，且两段收益
+负相关（截面 RankCorr −0.038，短期反转）。这个偏离本是写在 runner.py docstring 里的
+"有意的 legacy deviation"，但从未被量化。
+
+新增两个开关，都写进数据集 `meta.json` 并在 `load_or_build` 校验（口径错配直接报错——
+这类错不会崩、不会有 NaN，只会安静地测错一个策略）：`label.exec_lag` 驱动标签与回测的
+`exec_day`/最后信号日/benchmark 窗口；`features.lag` 把特征块整体后推。四组 rolling24h
+回测（test 2026-02~2026-08，topk20，cost0.001，24 锚点均值）：
+
+| 组 | 特征末端 | 成交 | Sharpe | NAV | 说明 |
+|---|---|---|---|---|---|
+| A | t | `close[t+1]` | +2.24 | 1.76 | 回测口径（= 上节成本表的 2.237，复现一致） |
+| B | t | `close[t]` | +1.53 | 1.52 | **切换前的实盘** |
+| C | t | `close[t]` | **+0.30** | 1.09 | 只对齐标签 |
+| D | t−1 | `close[t]` | **+2.32** | 1.78 | 对齐标签 + 特征滞后（**已上线**） |
+
+- **D−C = +2.02，24/24 锚点为正**——判定性证据。两者预测**逐元素相同**的标签、同一
+  成交时点、同一宇宙，唯一差别是特征含不含 `close[t]`；用**更旧**的信息反而好 7.8 倍，
+  只能是污染，不可能是信息量。
+- **机制**：几乎每个 Alpha158 列都建在 `close[t]` 上，而 `close[t]` 带微观结构噪声
+  `e[t]`（bid-ask bounce、收盘瞬时偏离）。特征含 `+e[t]`，`exec_lag=0` 的标签以
+  `close[t]` 为分母含 `−e[t]`，凭空生出一层纯噪声相关。模型学得到（C 的 valid RankIC
+  0.0907 是四组最高；切断共享后 D 掉到 0.0757 ≈ 原模型的 0.0763），但**不可交易**——
+  成交价正是那个被污染的 `close[t]`。**qlib Alpha158 默认跳一根 bar 正是为免疫此事，
+  不只是模拟成交延迟。**
+- **topk 网格印证污染集中在排序顶端**（与上节"混合清理排序顶部"同一判据）：C 在
+  k=5 为 −0.40、k=10 +0.09、k=20 +0.30、k=30 回到 +1.41 ≈ B——选宽了就被稀释。
+- **D−A = +0.08，12/24**（抛硬币）。与"两者信息结构等价、仅索引平移一位"的事前推理
+  吻合，是实验设计没漏进别的东西的独立佐证。
+
+**⚠ 两个开关必须成对出现，单开 `exec_lag=0` 就是 C 组。**
+
+**稳健性（判级依据）**：
+
+- topk×cost 网格 D−B **15 格全正**（+0.26~+2.04），且随 topk 收窄单调放大
+  （k=5 +2.04 → k=30 +0.30），形状正确；
+- **但时间维检验没过**：配对分块自助（block=10，5000 次）D−B 超额 Sharpe **+0.507，
+  95%CI [−0.135, +1.182]**，P(≤0)=0.061；test 三等分 D−B = −0.041 / −0.129 / **+1.591**，
+  优势几乎全来自最后 60 天；
+- 24 锚点的"19/24 为正"**不算统计证据**（锚点高度相关，接近一个样本）——与上节 topk
+  扫描的教训相同。**IC 同样不能作判据**：C 的 valid IC 最高而回测最烂；B 的 test
+  RankIC 比 D 高（0.0663 vs 0.0621）而 Sharpe 低 0.79。
+
+**判级**：D **采纳并已上线**，理由是**机制干净（成交那根 bar 不进特征）+ 各档 topk/cost
+下都不差于 B**，**不是**收益升级——不应指望 Sharpe 从 1.5 跳到 2.3。
+
+**验证**：历史 `cost_sweep.json` 与新代码跑出的 A 组，24 锚点 Sharpe 最大偏差 `2.22e-16`
+（默认路径逐位不变）；`test_causal_alignment.py` 在 `--base` 参数化后仍 PASS；实盘
+`Rolling24hScorer` 与 D 组回测同一决策日分数 **RankCorr = 1.000000**（无停更币的日子，
+max|Δ| ~1e-16），有停更币的日子 0.997+，偏差源于实盘新鲜度门剔除了回测仍在打分的停更
+币，**原 lag1 配置有完全相同的模式**（非本次引入，且实盘是更保守的一侧）。
+
+**顺带修复**：`freeze_universe` 只冻结统计**窗口**不冻结**名单**——实盘每天往 CSV 追加
+bar，同一个 `freeze_date` 隔几个月重建会得到不同宇宙（实测 48→50，出 `1000CAT/HMSTR/IOTX`
+等、入 `XLM/POL/PLUME` 等）。单次建库无害，但会静默污染任何两臂建于不同时间的 A/B。
+新增 `universe.codes` 钉死名单，`gen_binance_hour_ab.py --codes-from <meta.json>` 自动写入。
+
+复现：
+
+```bash
+python scripts/gen_binance_hour_ab.py --exec-lag 0 --feature-lag 1 --tag lag0f1 \
+    --codes-from data/binance-lgb-momtopk-h00/meta.json
+for h in $(seq -w 0 23); do python -m orange_quant.lgb.dataset binance-lgb-momtopk-lag0f1-h$h; done
+python scripts/gen_binance_hour_pooled.py --mode pooled --base binance-lgb-momtopk-lag0f1
+python scripts/run_hour_designs.py --base binance-lgb-momtopk-lag0f1 --designs pooled-ens-causal \
+    --topk 5 10 15 20 30 --cost-rate 0.001 0.002 0.004 --out D_sweep
+```
+
+部署：`config/binance-lgb-rolling24h-lag0f1.yaml`，compose 两处 `--config` 已切。
+⚠️ `config/` 是 `COPY` 进镜像的（非挂载），改配置后必须 `--build` 才生效。
+⚠️ 换 `state_file` 会让 server 认为当天那班没跑过而**立即补跑一轮**（实测切换当天
+11:04 立即触发）。首轮实际只有 5 笔成交——新旧 top-20 大部分重合，其余落在死区。
+
 ### 回归测试：`scripts/test_causal_alignment.py`
 
 滚动24h 视角对齐是这套东西里**唯一一处"错了也不会报错、只会让回测变好看"**的地方：
