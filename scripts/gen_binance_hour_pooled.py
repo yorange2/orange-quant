@@ -87,11 +87,11 @@ def segment_rows(ds, segment: str, embargo: int):
             (rows[:, 0] + s).astype(np.int64))
 
 
-def build_pooled(mode: str, embargo: int):
+def build_pooled(mode: str, embargo: int, base: str = BASE):
     """Stack the 24 anchors' train/valid rows into one design matrix."""
     parts = {"train": [], "valid": []}
     for h in HOURS:
-        ds = load_or_build(load_config(f"{BASE}-h{h:02d}"))
+        ds = load_or_build(load_config(f"{base}-h{h:02d}"))
         for seg in parts:
             X, y, date_idx = segment_rows(ds, seg, embargo)
             if mode == "pooled-hf":
@@ -188,12 +188,12 @@ def train_pooled(cfg: dict, pooled: dict, mode: str, rounds: int | None):
 # --------------------------------------------------------------------------
 # artifacts
 # --------------------------------------------------------------------------
-def write_configs(mode: str, shared_path: Path) -> None:
+def write_configs(mode: str, shared_path: Path, base: str = BASE) -> None:
     """One config per anchor: pooled model, that anchor's bars for execution."""
     for h in HOURS:
-        name = f"{BASE}-{mode}-h{h:02d}"
-        cfg = copy.deepcopy(load_config(f"{BASE}-h{h:02d}"))
-        cfg["paths"]["cache_dir"] = f"data/{BASE}-h{h:02d}"   # anchor's own bars
+        name = f"{base}-{mode}-h{h:02d}"
+        cfg = copy.deepcopy(load_config(f"{base}-h{h:02d}"))
+        cfg["paths"]["cache_dir"] = f"data/{base}-h{h:02d}"   # anchor's own bars
         cfg["paths"]["model_dir"] = f"models/{name}"
         cfg["paths"]["output_dir"] = f"outputs/{name}"
         out = Path("config/generated") / f"{name}.yaml"
@@ -214,13 +214,15 @@ def main() -> None:
     ap.add_argument("--embargo", type=int, default=2,
                     help="trailing days dropped from train/valid (label horizon)")
     ap.add_argument("--num-boost-round", type=int, default=None)
+    ap.add_argument("--base", default=BASE,
+                    help="config family to pool, e.g. binance-lgb-momtopk-lag0")
     args = ap.parse_args()
 
-    cfg = load_config(f"{BASE}-h00")
-    pooled = build_pooled(args.mode, args.embargo)
+    cfg = load_config(f"{args.base}-h00")
+    pooled = build_pooled(args.mode, args.embargo, args.base)
     model, metrics = train_pooled(cfg, pooled, args.mode, args.num_boost_round)
 
-    shared_dir = Path("models") / f"{BASE}-{args.mode}"
+    shared_dir = Path("models") / f"{args.base}-{args.mode}"
     shared_dir.mkdir(parents=True, exist_ok=True)
     shared_path = shared_dir / "model.pkl"
     with open(shared_path, "wb") as f:
@@ -230,7 +232,7 @@ def main() -> None:
         json.dumps(metrics, ensure_ascii=False, indent=2))
     print(f"[pooled] saved {shared_path}")
 
-    write_configs(args.mode, shared_path.resolve())
+    write_configs(args.mode, shared_path.resolve(), args.base)
 
 
 if __name__ == "__main__":

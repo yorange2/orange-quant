@@ -6,9 +6,11 @@ set (``orange_quant.lgb.features``) on the shared calendar, and caches
 features/label/returns as .npz for the LightGBM training loop.
 
 Label semantics (qlib Alpha158 defaults, ported exactly):
-  * raw label = ``close[t+2]/close[t+1] - 1`` (one-day-forward return), NaN
-    where not computable — rows with NaN label are dropped at train time
-    (qlib ``DropnaLabel``);
+  * raw label = ``close[t+1+lag]/close[t+lag] - 1`` (one-day-forward return),
+    NaN where not computable — rows with NaN label are dropped at train time
+    (qlib ``DropnaLabel``). ``lag = label.exec_lag`` is the gap between the
+    signal day and the fill, and must match how the portfolio is actually
+    executed (see :func:`exec_lag`);
   * the stored label is the per-date cross-sectional z-score
     (``(x - mean)/std``, pandas ddof=1, stats per date over non-NaN coins —
     qlib ``CSZScoreNorm`` is stateless per date, so this is exact).
@@ -32,6 +34,45 @@ import pandas as pd
 
 from orange_quant.lgb.features import FEATURE_COLS, alpha158_features
 from orange_quant.rl.dataset import load_bars_and_calendar, load_config, segment_idx
+
+
+def exec_lag(config: dict) -> int:
+    """Decision-day → fill-day gap, in bars. The label and the backtest both read it.
+
+    ``1`` (default) is the legacy qlib timing: decide on close[t], fill at
+    close[t+1], earn close[t+1]→close[t+2]. ``0`` matches what the live runner
+    actually does — a market order minutes after the bar it decided on, so the
+    fill is ≈close[t] and the position earns close[t]→close[t+1].
+
+    Keeping this in ONE place is the point: a label built with one lag and a
+    backtest run with another produces no error and no NaN, just a silently
+    mismeasured strategy.
+    """
+    lag = int(config.get("label", {}).get("exec_lag", 1))
+    if lag not in (0, 1):
+        raise ValueError(f"label.exec_lag must be 0 or 1, got {lag}")
+    return lag
+
+
+def feature_lag(config: dict) -> int:
+    """Bars the feature block is pushed back before being paired with the label.
+
+    ``0`` (default) pairs label[t] with features computed through close[t].
+    ``1`` pairs it with features through close[t−1], so ``exec_lag=0``'s label
+    ``close[t+1]/close[t]−1`` no longer shares close[t] with its own features.
+
+    That sharing is the thing worth isolating: nearly every Alpha158 column is
+    built on close[t], and close[t] carries microstructure noise (bid-ask
+    bounce, a late sweep that reverts) which enters the features as +e[t] and
+    the exec_lag=0 label — close[t] is its denominator — as −e[t]. The induced
+    correlation is pure noise, learnable, and not tradeable, since the fill is
+    at that same polluted close[t]. Lagging the features severs it while
+    leaving the predicted return period unchanged.
+    """
+    lag = int(config.get("features", {}).get("lag", 0))
+    if lag < 0:
+        raise ValueError(f"features.lag must be >= 0, got {lag}")
+    return lag
 
 
 @dataclass
@@ -124,6 +165,10 @@ def build_dataset(config: dict) -> LGBDataset:
     valid_s, valid_e = config["valid"]["start"], config["valid"]["end"]
     test_s, test_e = config["test"]["start"], config["test"]["end"]
 
+    lag = exec_lag(config)
+    print(f"[lgb-data] label.exec_lag={lag}: label[t] = "
+          f"close[t+{lag + 1}]/close[t+{lag}] − 1")
+
     codes, bars, cal = load_bars_and_calendar(config, "lgb-data")
 
     feats = np.full((len(cal), len(codes), len(FEATURE_COLS)), np.nan, np.float32)
@@ -143,7 +188,7 @@ def build_dataset(config: dict) -> LGBDataset:
         c = one["close"]
         close[:, j] = c.to_numpy(np.float32)
         ret_own = (c.shift(-1) / c - 1.0).reindex(cal)
-        label_own = (c.shift(-2) / c.shift(-1) - 1.0).reindex(cal)
+        label_own = (c.shift(-(lag + 1)) / c.shift(-lag) - 1.0).reindex(cal)
         ret[:, j] = ret_own.fillna(0.0).to_numpy(np.float32)
         label[:, j] = label_own.to_numpy(np.float32)
 
@@ -155,6 +200,15 @@ def build_dataset(config: dict) -> LGBDataset:
         feats = _cs_normalize(feats, cs_norm)
     else:
         raise ValueError(f"features.cs_norm must be rank|zscore|none, got {cs_norm!r}")
+
+    flag = feature_lag(config)
+    if flag:
+        # np.concatenate, not an in-place overlapping slice assignment: the
+        # latter copies low→high and would smear row 0 across the array.
+        pad = np.full((flag,) + feats.shape[1:], np.nan, np.float32)
+        feats = np.concatenate([pad, feats[:-flag]])
+        print(f"[lgb-data] features.lag={flag}: label[t] now pairs with "
+              f"features through close[t−{flag}]")
 
     ind_groups = None
     if config.get("label", {}).get("industry_neutral"):
@@ -198,6 +252,18 @@ def load_or_build(config: dict, force: bool = False) -> LGBDataset:
     if npz_path.exists() and meta_path.exists() and not force:
         print(f"[lgb-data] loading cached dataset: {npz_path}")
         meta = json.loads(meta_path.read_text())
+        # A cache built under a different exec_lag has a label array that looks
+        # perfectly valid but measures a different holding period — the exact
+        # failure exec_lag() exists to prevent. Caches predating this field were
+        # all built at lag 1.
+        for field, want, default in (("exec_lag", exec_lag(config), 1),
+                                     ("feature_lag", feature_lag(config), 0)):
+            cached = int(meta.get(field, default))
+            if cached != want:
+                raise ValueError(
+                    f"{npz_path} was built with {field}={cached} but the config "
+                    f"asks for {want}. Rebuild with --force, or point "
+                    f"paths.cache_dir at a separate directory.")
         z = np.load(npz_path)
         return LGBDataset(
             dates=z["dates"],
@@ -215,6 +281,8 @@ def load_or_build(config: dict, force: bool = False) -> LGBDataset:
         "codes": ds.codes,
         "split_idx": {k: list(v) for k, v in ds.split_idx.items()},
         "feature_names": FEATURE_COLS,
+        "exec_lag": exec_lag(config),
+        "feature_lag": feature_lag(config),
     }))
     print(f"[lgb-data] cached to {npz_path}")
     return ds

@@ -1,0 +1,107 @@
+# 滚动 24h 视角混合 —— D 路线（成交口径对齐 + 特征滞后一根）的实盘配置。
+#
+# 与 binance-lgb-rolling24h.yaml 的差别只有"模型是按什么口径训的"，执行流程一字未改：
+# 仍是每天 UTC 00:05 全额轮动到 top-20，仍走 LGBRotationRunner + Rolling24hScorer。
+#
+# 为什么换：原配置的模型标签是 close[t+2]/close[t+1]−1（隔一根 bar 成交），而实盘在
+# 信号当根 bar 收盘就市价成交、吃的是 close[t]→close[t+1] —— 训练目标和实际持仓段错开
+# 整整一根 bar。2026-08-20 的四组 A/B（rolling24h, test 2026-02~2026-08, topk20）：
+#
+#   A 原模型 + 隔天成交（回测口径）          Sharpe +2.24
+#   B 原模型 + 当日成交（原实盘 = 现状）      Sharpe +1.53
+#   C 对齐标签，特征仍含 close[t]            Sharpe +0.30   ← 只对齐标签是灾难
+#   D 对齐标签 + 特征滞后一根（本配置）        Sharpe +2.32
+#
+# D−C = +2.02 Sharpe，24/24 锚点为正；C 与 D 预测逐元素相同的标签、同一成交时点，
+# 唯一差别是特征含不含 close[t]。原因：几乎每个 Alpha158 列都建在 close[t] 上，而
+# close[t] 带微观结构噪声 e[t]（bid-ask bounce、收盘瞬时偏离）；特征含 +e[t]，
+# exec_lag=0 的标签以 close[t] 为分母含 −e[t]，凭空生出一层纯噪声相关。模型学得到
+# （C 的 valid RankIC 0.0907 是四组最高）但不可交易——成交价正是那个被污染的 close[t]。
+# features.lag=1 把成交那根 bar 挡在特征之外，这层耦合就断了。
+#
+# ⚠ label.exec_lag 与 features.lag 必须成对出现。单开 exec_lag=0 就是 C 组。
+#   两者都写进了数据集 meta.json，load_or_build 会校验缓存口径是否匹配。
+# ⚠ universe.codes 钉死 48 币：freeze_universe 只冻结统计窗口不冻结名单，而实盘每天
+#   往 CSV 追加 bar，同一个 freeze_date 几个月后重建会得到不同宇宙（实测 48→50）。
+#   钉死后本配置与原实盘配置跑在同一批币上，切换前后可比。
+#
+# 其余参数（min_universe / min_notional_safety / max_lag_hours 等）的取舍理由见
+# binance-lgb-rolling24h.yaml，此处保持同值。
+backtest:
+  account: 1000000
+  bars_per_year: 238
+  benchmark: BTC
+  cost_rate: 0.001
+  min_cost: 0
+data:
+  end_time: '2026-08-01'
+  freq: 1h
+  hour_of_day: 0
+  raw_dir: data/binance_h1_raw
+  start_time: '2020-01-01'
+ensemble:
+  n_seeds: 5
+features:
+  lag: 1                    # 特征末端 = close[t−1]，成交那根不进特征
+  warmup_start: '2019-06-01'
+label:
+  exec_lag: 0               # 标签 = close[t+1]/close[t]−1，即实盘真正持有的那段
+lgb:
+  bagging_fraction: 0.8
+  bagging_freq: 1
+  early_stopping_rounds: 100
+  feature_fraction: 0.6
+  lambda_l1: 2.0
+  lambda_l2: 2.0
+  learning_rate: 0.02
+  loss: mse
+  min_data_in_leaf: 100
+  num_boost_round: 1000
+  num_leaves: 15
+  seed: 42
+market:
+  benchmark_symbol: BTC
+  quote_ccy: USDT
+  type: crypto
+  venue: binance
+paths:
+  cache_dir: data/binance-lgb-momtopk-lag0f1-h00
+  model_dir: models/binance-lgb-momtopk-lag0f1-pooled
+  output_dir: outputs/binance-lgb-rolling24h-lag0f1
+strategy:
+  blend: rolling24h
+  hold_thresh: 2
+  n_drop: 1
+  risk_degree: 0.7
+  topk: 20
+  type: lgb
+test:
+  end: '2026-08-01'
+  start: '2026-02-01'
+trading:
+  blacklist: data/reduce_only_blacklist.json
+  lookback: 160
+  max_bar_age_days: 2
+  max_lag_hours: 0
+  max_position_pct: 0.25
+  min_notional_safety: 6.0
+  min_trade: 6.0
+  min_universe: 30
+  refresh_data: true
+  risk_degree: 0.7
+  state_file: data/live_state/binance-lgb-rolling24h-lag0f1.json
+  topk: 20
+universe:
+  codes: [BTC, ETH, SOL, XRP, DOGE, BNB, SUI, PEPE, ADA, ZEC, TRX, ENA, LINK,
+          LTC, AVAX, WLD, TAO, UNI, NEAR, AAVE, PUMP, TON, GIGGLE, ICP, KAITO,
+          MMT, TST, ZBT, MUBARAK, BANK, BABY, SAGA, TUT, DEXE, COOKIE, HEI, BMT,
+          PIXEL, 1000CAT, EPIC, SYN, HMSTR, ACE, EURI, IOTX, BICO, UTK, DODO]
+  freeze_date: '2026-08-07'
+  liquidity_start: '2025-01-01'
+  min_history_days: 200
+  provider: liquidity
+  raw_dir: data/binance_h1_raw
+  top_n: 50
+valid:
+  end: '2026-01-31'
+  start: '2025-07-01'

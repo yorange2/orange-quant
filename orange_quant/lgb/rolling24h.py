@@ -18,6 +18,14 @@ pins the backtest side of that equivalence.
 
 Cost note: the naive shape of this is 24 anchors × N coins CSV reads. Each
 coin's hourly file is read **once** and sliced 24 ways instead.
+
+``features.lag`` (see ``dataset.feature_lag``) drops that many bars from the
+end of every view's anchor series before computing features. With lag 1 the
+fill price — the close of the bar the run reacts to — is kept OUT of the
+features that pick the coins, which the four-way A/B showed is worth ~2.0
+Sharpe (0.30 → 2.32) at identical label and fill timing. It must match the lag
+the model was trained under; the two are checked against the dataset cache in
+``load_or_build``.
 """
 
 from __future__ import annotations
@@ -28,6 +36,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from orange_quant.lgb.dataset import feature_lag
 from orange_quant.lgb.features import FEATURE_COLS, alpha158_features
 from orange_quant.rl.dataset import bar_reader
 
@@ -61,6 +70,11 @@ class Rolling24hScorer:
         self.codes = codes
         self.model = model
         self.lookback = int(lookback)
+        # ``features.lag`` bars are dropped from the END of each view's anchor
+        # series before features are computed, so the fill price close[t] never
+        # appears in the features that picked the coin. Must match the lag the
+        # model was trained under — see orange_quant.lgb.dataset.feature_lag.
+        self.feature_lag = feature_lag(cfg)
         # hour_of_day must be OFF here: we want the whole hourly frame per coin
         # and do the slicing ourselves, one read instead of 24.
         self.raw_cfg = copy.deepcopy(cfg)
@@ -102,11 +116,17 @@ class Rolling24hScorer:
                 continue
             anchor = b[b.index.hour == ts.hour]      # the clock-anchored daily series
             anchor = anchor[anchor.index <= ts]
-            if len(anchor) < MIN_BARS:
+            if len(anchor) < MIN_BARS + self.feature_lag:
                 continue
             last = anchor.index[-1]
             if ts - last > tol:                      # this coin is dark for this view
                 continue
+            # Staleness is judged on ``last`` BEFORE the lag is applied: the
+            # newest bar still has to exist, it just does not feed the features.
+            # Trimming first would let a feed that is a full day behind look
+            # perfectly fresh.
+            if self.feature_lag:
+                anchor = anchor.iloc[: -self.feature_lag]
             f = alpha158_features(anchor.iloc[-self.lookback:])
             X[j] = f[FEATURE_COLS].iloc[-1].to_numpy(np.float32)
             newest = last if newest is None else max(newest, last)
@@ -171,6 +191,7 @@ class Rolling24hScorer:
             "coins_scored": int((cnt > 0).sum()),
             "min_views_per_coin": int(cnt[cnt > 0].min()) if (cnt > 0).any() else 0,
             "bars_loaded": len(bars),
+            "feature_lag": self.feature_lag,
             "stale": bool(stale),
         }
         if stale:

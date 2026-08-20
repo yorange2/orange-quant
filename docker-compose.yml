@@ -59,9 +59,15 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # LGB 滚动 24h 视角混合（PR #36 的采纳设计）。打分需要 data/binance_h1_raw
-  # 与 h00 特征缓存，两者都从挂载的 ./data 读；模型在挂载的 ./models。
+  # LGB 滚动 24h 视角混合。打分需要 data/binance_h1_raw 与 lag0f1 特征缓存，
+  # 两者都从挂载的 ./data 读；模型在挂载的 ./models。
   # 服务器在整点后几分钟跑：每个视角要的是**已收盘**的小时线。
+  #
+  # 2026-08-20 起用 -lag0f1 配置（D 路线）：标签对齐到实盘当日成交口径
+  # (label.exec_lag=0)，同时把成交那根 bar 挡在特征之外 (features.lag=1)。
+  # 只做前者会让特征与标签共享 close[t] 的微观结构噪声，回测 Sharpe 从 2.32
+  # 塌到 0.30 —— 两个开关必须成对，理由见配置文件头注释。
+  # ⚠ config/ 是 COPY 进镜像的（非挂载），改配置后必须 --build 才生效。
   orange-quant-rolling24h:
     build: .
     image: orange-quant:latest
@@ -72,7 +78,7 @@ services:
     volumes:
       - ./models:/app/models
       - ./data:/app/data
-    command: ["--config", "binance-lgb-rolling24h", "--hour", "0", "--minute", "5"]
+    command: ["--config", "binance-lgb-rolling24h-lag0f1", "--hour", "0", "--minute", "5"]
     profiles:
       - rolling24h-live
     logging:
@@ -91,7 +97,7 @@ services:
     volumes:
       - ./models:/app/models
       - ./data:/app/data
-    command: ["--config", "binance-lgb-rolling24h", "--once", "--dry-run"]
+    command: ["--config", "binance-lgb-rolling24h-lag0f1", "--once", "--dry-run"]
     profiles:
       - rolling24h-once
     logging:
