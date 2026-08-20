@@ -82,6 +82,17 @@ CAUSAL = {"pooled-ens-causal": "pooled", "ens-causal": "single"}
 OUT = Path("outputs/hour-designs")
 
 _DS_CACHE: dict[str, object] = {}
+_LAG: int | None = None
+
+
+def anchor_lag() -> int:
+    """``label.exec_lag`` of the active config family (all 24 anchors share it)."""
+    global _LAG
+    if _LAG is None:
+        from orange_quant.lgb.dataset import exec_lag
+
+        _LAG = exec_lag(load_config(f"{BASE}-h00"))
+    return _LAG
 
 
 def ds_for(hour: int):
@@ -95,7 +106,7 @@ def ds_for(hour: int):
 def decision_range(ds):
     """[first, last] decision-day indices: the backtest marks out at test_end."""
     test_s, test_e = ds.split_idx["test"]
-    return test_s, test_e - 2
+    return test_s, test_e - 1 - anchor_lag()
 
 
 def anchor_model(name: str):
@@ -276,6 +287,8 @@ def evaluate(design: str, hour: int, preds: np.ndarray,
 
 
 def main() -> None:
+    global BASE, _LAG
+
     ap = argparse.ArgumentParser(description="Backtest the 4 hour designs × 24 anchors")
     ap.add_argument("--designs", nargs="*", default=DESIGNS, choices=DESIGNS)
     ap.add_argument("--hours", nargs="*", type=int, default=HOURS)
@@ -285,7 +298,12 @@ def main() -> None:
     ap.add_argument("--cost-rate", nargs="*", type=float, default=None,
                     help="sweep per-side fee (e.g. 0.001 0.002)")
     ap.add_argument("--out", default=None, help="output basename under outputs/hour-designs")
+    ap.add_argument("--base", default=BASE,
+                    help="config family, e.g. binance-lgb-momtopk-lag0")
     args = ap.parse_args()
+
+    BASE, _LAG = args.base, None
+    print(f"[designs] base={BASE} exec_lag={anchor_lag()}")
 
     OUT.mkdir(parents=True, exist_ok=True)
     blends = {d: build_ens_blend(base_scorer(d))

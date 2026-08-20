@@ -134,13 +134,24 @@ def load_bars_and_calendar(config: dict, log_prefix: str):
     from orange_quant.data.universe import freeze_universe as freeze
 
     uni = config["universe"]
-    codes = freeze(uni["raw_dir"], uni["top_n"], uni["freeze_date"],
-                   uni["liquidity_start"],
-                   membership=uni.get("membership"),
-                   min_history_days=uni.get("min_history_days", 250),
-                   min_amount=uni.get("min_amount", 0.0))
-    print(f"[{log_prefix}] frozen universe: {len(codes)} names, "
-          f"freeze_date={uni['freeze_date']}")
+    # ``universe.codes`` pins the roster outright. freeze_universe() is only
+    # frozen in its WINDOW: it re-ranks liquidity from whatever the CSVs hold
+    # today, and live keeps appending bars to them, so a rebuild months later
+    # yields a different roster from the same freeze_date. Harmless when a
+    # dataset is built once, but it silently confounds any A/B whose arms were
+    # built at different times — pin the list and the comparison is clean.
+    if uni.get("codes"):
+        codes = list(uni["codes"])
+        print(f"[{log_prefix}] pinned universe: {len(codes)} names "
+              f"(universe.codes, liquidity freeze bypassed)")
+    else:
+        codes = freeze(uni["raw_dir"], uni["top_n"], uni["freeze_date"],
+                       uni["liquidity_start"],
+                       membership=uni.get("membership"),
+                       min_history_days=uni.get("min_history_days", 250),
+                       min_amount=uni.get("min_amount", 0.0))
+        print(f"[{log_prefix}] frozen universe: {len(codes)} names, "
+              f"freeze_date={uni['freeze_date']}")
 
     read = bar_reader(config)
     w0 = pd.Timestamp(config["features"]["warmup_start"])

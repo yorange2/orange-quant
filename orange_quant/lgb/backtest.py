@@ -1,12 +1,15 @@
 """Backtest: TopkDropout portfolio over the test segment, net of taker fees.
 
-Timing (matches the legacy qlib pipeline): a signal computed from features at
-day t rebalances at the close of day t+1; the new position earns
-close[t+1] → close[t+2] — exactly the return the model was trained to predict
-(label[t] = close[t+2]/close[t+1] − 1). Decision days run t ∈ [test_start,
-test_end−2]; the final mark is at close[test_end]. The live runner trades on
-the signal day instead — a deliberate legacy deviation, documented in
-runner.py.
+Timing is set by ``label.exec_lag`` (see ``dataset.exec_lag``), so the fill and
+the training label can never drift apart: a signal from features at day t fills
+at close[t+lag] and earns close[t+lag] → close[t+1+lag], which IS label[t].
+Decision days run t ∈ [test_start, test_end−1−lag].
+
+  * ``lag=1`` — the legacy qlib pipeline. The live runner trades on the signal
+    day instead, so the backtest measures a strategy live does not run (the
+    deviation is documented in runner.py).
+  * ``lag=0`` — fill at close[t], matching the live runner: it places a market
+    order minutes after the bar it decided on.
 
 TopkDropout port (qlib contrib/strategy/signal_strategy.py):
   * last  = held coins sorted by pred desc (NaN pred ranks last)
@@ -35,7 +38,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
-from orange_quant.lgb.dataset import LGBDataset, load_or_build, load_config
+from orange_quant.lgb.dataset import LGBDataset, exec_lag, load_or_build, load_config
 from orange_quant.lgb.ensemble import EnsembleLGB
 from orange_quant.rl.backtest import benchmark_closes, plot_navs, write_metrics
 from orange_quant.rl.metrics import bars_per_year, per_date_corr, return_metrics
@@ -81,15 +84,16 @@ def compute_ic(pred: np.ndarray, label: np.ndarray, t0: int, t1: int) -> Dict[st
 def benchmark_nav(ds: LGBDataset, cfg: dict, t0: int, t1: int) -> Tuple[np.ndarray, np.ndarray]:
     """BTC and equal-weight NAVs over the same P&L windows as the strategy.
 
-    Row k (signal day t) covers ret[t+1] = close[t+2]/close[t+1] − 1, aligned
-    with the strategy's drift for the same row.
+    Row k (signal day t) covers ret[t+lag] = close[t+1+lag]/close[t+lag] − 1,
+    aligned with the strategy's drift for the same row.
     """
+    lag = exec_lag(cfg)
     c = benchmark_closes(cfg, ds.dates).to_numpy()
     btc_ret = np.zeros(len(c))
     ok = ~np.isnan(c[:-1])
     btc_ret[:-1][ok] = c[1:][ok] / c[:-1][ok] - 1.0
 
-    rows = [t + 1 for t in range(t0, t1 + 1)]       # P&L window starts at exec day
+    rows = [t + lag for t in range(t0, t1 + 1)]     # P&L window starts at exec day
     b = np.cumprod(1.0 + btc_ret[rows])
     ew = np.cumprod(1.0 + ds.ret[rows].mean(axis=1))
     return b, ew
@@ -113,8 +117,9 @@ def run_backtest(cfg: dict, ds: LGBDataset, preds: np.ndarray
     account = float(bt["account"])
     N = ds.n_stocks
 
+    lag = exec_lag(cfg)
     test_s, test_e = ds.split_idx["test"]
-    t1 = test_e - 2                                 # last signal day
+    t1 = test_e - 1 - lag                           # last signal day
     close = ds.close                                # (T, N) NaN where no bar
     # A-share suspensions: a held name can go days/weeks without a bar. Trade
     # execution still requires a real bar (sells/buys skip NaN-price days), but
@@ -133,7 +138,7 @@ def run_backtest(cfg: dict, ds: LGBDataset, preds: np.ndarray
     positions = []
     prev_nav = account
     for k, t in enumerate(range(test_s, t1 + 1)):
-        exec_day = t + 1
+        exec_day = t + lag
         price = close[exec_day].astype(np.float64)  # (N,) — avoid float32 leakage
         vprice = val_close[exec_day]                # (N,) ffill'd for valuation
         held = list(holdings.keys())
@@ -204,7 +209,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     test_s, test_e = ds.split_idx["test"]
-    t1 = test_e - 2
+    t1 = test_e - 1 - exec_lag(cfg)
     preds = predict_block(model, ds.feats, test_s, t1)
     rl, positions = run_backtest(cfg, ds, preds)
     rl.to_csv(out_dir / "nav.csv", index=False)
