@@ -25,6 +25,22 @@
 #   往 CSV 追加 bar，同一个 freeze_date 几个月后重建会得到不同宇宙（实测 48→50）。
 #   钉死后本配置与原实盘配置跑在同一批币上，切换前后可比。
 #
+# topk 20 → 10（2026-08-20，用户决定）。D 路线下 24 锚点均值 Sharpe 2.59 vs 2.32、
+# NAV 1.87 vs 1.78、最大回撤 −0.173 vs −0.186，方向一致为正；且这个排序相对切换前是
+# **反转**的（原模型下 topk10 只有 1.36，劣于 topk20 的 1.53）——与"污染集中在排序
+# 顶端、D 把顶端清干净了"一致：顶端可信之后，越集中越有利。
+# ⚠ 代价与不确定性同样要记住：
+#   - 年换手 16.7 → 26.2（+57%），0.1% 费率下年成本 1.7% → 2.6%；
+#   - 优势随费率快速衰减：0.1% 时 +0.27、0.2% +0.19、0.4% 仅 +0.03（≈打平），而实盘
+#     市价单在小币上的滑点会把有效费率推到 0.1% 以上；
+#   - 配对分块自助（超额收益，block=10/5000次）10−20 = +0.068，95%CI [−0.662, +0.707]，
+#     P(≤0)=0.42 —— **统计上无法区分**；子窗口 2/3 段为正但第三段 −0.901；
+#   - 跨锚点 σ 0.780 vs 0.578，最差锚点 +1.154 vs +1.592（分散度下降，尾部更差）；
+#   - 与 D 路线切换**同日生效**，一次动了两个变量，后续归因会受影响。
+# 连带影响：单仓从 ~$44 升到 ~$89（账户 ~$1,270），死区 min_notional_safety=6 占单仓
+# 比例从 14% 降到 7%（更宽松，不需另调）；max_position_pct=0.25 对目标权重
+# 0.7/10=0.07 无约束；min_universe=30 对 topk=10 余量更大。
+#
 # 其余参数（min_universe / min_notional_safety / max_lag_hours 等）的取舍理由见
 # binance-lgb-rolling24h.yaml，此处保持同值。
 backtest:
@@ -73,7 +89,7 @@ strategy:
   hold_thresh: 2
   n_drop: 1
   risk_degree: 0.7
-  topk: 20
+  topk: 10
   type: lgb
 test:
   end: '2026-08-01'
@@ -90,7 +106,7 @@ trading:
   refresh_data: true
   risk_degree: 0.7
   state_file: data/live_state/binance-lgb-rolling24h-lag0f1.json
-  topk: 20
+  topk: 10
 universe:
   codes: [BTC, ETH, SOL, XRP, DOGE, BNB, SUI, PEPE, ADA, ZEC, TRX, ENA, LINK,
           LTC, AVAX, WLD, TAO, UNI, NEAR, AAVE, PUMP, TON, GIGGLE, ICP, KAITO,
