@@ -25,6 +25,7 @@ RUN pip install --no-cache-dir torch==2.5.1 --index-url https://download.pytorch
 # Copy project code and configs
 COPY orange_quant/ ./orange_quant/
 COPY config/ ./config/
+COPY scripts/__init__.py scripts/retrain_live.py ./scripts/
 
 # Health check: liveness of the trading loop (stale heartbeat => unhealthy).
 # start-period covers first boot + first run.

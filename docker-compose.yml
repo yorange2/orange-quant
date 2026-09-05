@@ -10,7 +10,36 @@ services:
     volumes:
       - ./models:/app/models
       - ./data:/app/data
+    depends_on:
+      orange-quant-binance-retrain:
+        condition: service_started
     command: ["--config", "binance-rl-rotation", "--hour", "0", "--minute", "15"]
+    profiles:
+      - binance-live
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Retrain the Binance RL policy every quarter.  This is deliberately a
+  # separate process so PPO training cannot block the daily trading loop.
+  # The shared volumes make the new atomic checkpoint visible on the next run.
+  orange-quant-binance-retrain:
+    build: .
+    image: orange-quant:latest
+    container_name: orange-quant-binance-retrain
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+    entrypoint: ["python", "-m", "orange_quant.retrain_scheduler"]
+    command: ["--config", "binance-rl-rotation", "--interval-months", "3", "--day", "1", "--hour", "3", "--minute", "0"]
+    stop_grace_period: 45s
+    healthcheck:
+      disable: true
     profiles:
       - binance-live
     logging:
