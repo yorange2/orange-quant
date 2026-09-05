@@ -182,6 +182,18 @@ always OOS (the retrain at day T only sees data before T).
 
 ## Live retraining (walk-forward schedule)
 
+The `binance-live` Docker profile includes a dedicated retraining service. It
+runs on the first day of Jan/Apr/Jul/Oct at 03:00 UTC, retries failures after
+24 hours, and stores idempotency state in
+`models/binance-rl-rotation/retrain_schedule.json`:
+
+```bash
+docker compose --profile binance-live up -d --build
+docker compose logs -f orange-quant-binance-retrain
+```
+
+For a non-Docker deployment, schedule the same job with cron:
+
 ```bash
 # quarterly, from cron (e.g. 1st of Jan/Apr/Jul/Oct 03:00):
 # 0 3 1 1,4,7,10 * cd /path/to/orange-quant && .venv/bin/python -m scripts.retrain_live --config binance-rl-rotation
